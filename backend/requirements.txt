@@ -1,0 +1,16 @@
+# ============================================================
+# Dependências do backend
+# Instalar com: pip install -r requirements.txt
+#
+# Escopo atual: Fases 1 a 4 do cronograma (fundação, repositórios,
+# coletor SNMP e execução manual via CLI) - ver docs/CRONOGRAMA.md.
+# As dependências das fases seguintes (pytest, APScheduler, FastAPI)
+# serão adicionadas quando chegarmos nesses artefatos.
+# ============================================================
+
+# --- Banco de dados ---
+aiomysql==0.3.2            # driver assíncrono para MariaDB/MySQL
+python-dotenv==1.2.2       # carrega variáveis do arquivo .env
+
+# --- Coleta SNMP ---
+pysnmp==7.1.27              # cliente SNMP assíncrono (já validado no MVP)
