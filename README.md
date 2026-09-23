@@ -123,14 +123,31 @@ comparadas em [docs/CRONOGRAMA.md](docs/CRONOGRAMA.md#fase-6--decisão-pendente-
 
 ### Testes
 
-```bash
-cd backend
-pytest
-```
-
 A suíte não usa o parque nem o banco: a consulta SNMP e os repositories
 são dublados. Roda em qualquer máquina, inclusive nas que não alcançam a
 rede das impressoras.
+
+Num clone novo, três passos:
+
+```bash
+cd backend
+pip install -r requirements.txt   # de preferência num venv
+cp .env.example .env              # não precisa editar para rodar os testes
+pytest
+```
+
+Duas coisas que costumam confundir:
+
+- **As dependências precisam estar instaladas mesmo sem banco nem rede.**
+  Os testes importam os módulos do projeto, e esses módulos importam
+  `aiomysql` e `pysnmp` no topo. Nenhuma conexão é aberta - mas sem os
+  pacotes, o import falha.
+- **O `.env` precisa existir.** `config.py` valida a configuração no
+  momento da importação, então sem ele a suíte nem chega a rodar. Os
+  valores do `.env.example` servem como estão; não precisam ser reais.
+
+O mapa dos 58 testes, o que cada um protege e o que ficou **fora** da
+cobertura estão em [docs/TESTES.md](docs/TESTES.md).
 
 ---
 
