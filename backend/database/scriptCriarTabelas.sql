@@ -45,6 +45,24 @@ CREATE TABLE impressora (
 -- Tabela: coleta_executada
 -- Registro de cada execucao da rotina de coleta.
 -- Precisa vir ANTES de leitura_toner, que a referencia.
+--
+-- COLETA SOBREPOSTA
+-- -----------------
+-- Duas coletas simultaneas competiriam pela mesma rede e gravariam
+-- leituras concorrentes para os mesmos suprimentos. O cenario nao e
+-- hipotetico: o agendador dispara as 09/13/17 e alguem pode rodar
+-- cli.py na mao no mesmo minuto - sao dois processos distintos, entao
+-- um controle em memoria nao resolveria.
+--
+-- A exclusividade e garantida pelo PROPRIO BANCO, e nao por um
+-- "consulta antes de inserir" no codigo: entre a consulta e o INSERT
+-- existe uma janela em que os dois processos passariam pela checagem.
+--
+-- Como funciona: a coluna gerada vale 1 enquanto o status e RUNNING e
+-- NULL em qualquer outro status. Como o MariaDB nao considera NULLs
+-- duplicados num indice UNIQUE, so pode existir UMA linha RUNNING por
+-- vez. A segunda tentativa falha no INSERT com erro de chave duplicada
+-- e nenhum registro parcial chega a ser criado.
 -- ============================================================
 CREATE TABLE coleta_executada (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -57,6 +75,11 @@ CREATE TABLE coleta_executada (
     impressoras_sucesso INT NOT NULL DEFAULT 0,
     impressora_falha INT NOT NULL DEFAULT 0,
     error_summary TEXT NULL,
+
+    execucao_exclusiva TINYINT UNSIGNED
+        AS (IF(status = 'RUNNING', 1, NULL)) VIRTUAL,
+
+    CONSTRAINT uq_uma_coleta_em_execucao UNIQUE (execucao_exclusiva),
 
     INDEX idx_iniciado_em (iniciado_em)
 );

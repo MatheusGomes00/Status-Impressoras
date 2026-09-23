@@ -8,25 +8,91 @@ Não decide status nem regra de negócio - isso é papel do service.py.
 import aiomysql
 
 from database import get_connection
-from collection_runs.entities import ColetaExecutada, CollectionStatus, TriggerType
+from collection_runs.entities import (
+    ColetaEmAndamento,
+    ColetaExecutada,
+    CollectionStatus,
+    TriggerType,
+)
+
+_COLUNAS = (
+    "id, trigger_type, iniciado_em, finalizado_em, status, "
+    "total_impressoras, impressoras_sucesso, impressora_falha, error_summary"
+)
 
 
 async def criar_run(trigger_type: TriggerType) -> int:
     """
     Registra o início de uma coleta (status=RUNNING, contadores zerados)
     e retorna o id gerado, para ser usado pelas leituras dessa execução
-    (readings.repository, Fase 3) e para finalizar o run depois.
+    e para finalizar o run depois.
+
+    Levanta ColetaEmAndamento se já houver outra coleta RUNNING. Quem
+    barra é o índice UNIQUE uq_uma_coleta_em_execucao, no banco - ver o
+    comentário da tabela em database/scriptCriarTabelas.sql. Traduzir o
+    erro do driver para uma exceção do domínio é papel do repository:
+    é a única camada que deve conhecer o aiomysql.
+    """
+    try:
+        async with get_connection() as conn:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    "INSERT INTO coleta_executada (trigger_type, iniciado_em, status) "
+                    "VALUES (%s, NOW(), %s)",
+                    (trigger_type.value, CollectionStatus.RUNNING.value),
+                )
+                return cursor.lastrowid
+    except aiomysql.IntegrityError as excecao:
+        if "uq_uma_coleta_em_execucao" in str(excecao):
+            raise ColetaEmAndamento(
+                "Já existe uma coleta em execução."
+            ) from excecao
+        raise
+
+
+async def buscar_em_execucao() -> ColetaExecutada | None:
+    """Retorna a coleta com status RUNNING, se houver. No máximo uma existe."""
+    async with get_connection() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cursor:
+            await cursor.execute(
+                f"SELECT {_COLUNAS} "
+                "FROM coleta_executada "
+                "WHERE status = %s "
+                "LIMIT 1",
+                (CollectionStatus.RUNNING.value,),
+            )
+            linha = await cursor.fetchone()
+
+    return ColetaExecutada.from_row(linha) if linha else None
+
+
+async def marcar_travada_como_falha(id_coleta: int, motivo: str) -> None:
+    """
+    Fecha como FAILED uma coleta que ficou presa em RUNNING.
+
+    Só faz sentido para o caso de o processo ter morrido no meio (queda
+    de energia, reboot): sem isso, a linha RUNNING órfã bloquearia todas
+    as coletas seguintes por causa do índice UNIQUE.
+
+    Preserva os contadores já gravados e só acrescenta o motivo ao
+    error_summary - a coleta rodou parcialmente, e apagar o que ela
+    conseguiu registrar seria perder informação.
     """
     async with get_connection() as conn:
         async with conn.cursor() as cursor:
             await cursor.execute(
-                "INSERT INTO coleta_executada (trigger_type, iniciado_em, status) "
-                "VALUES (%s, NOW(), %s)",
-                (trigger_type.value, CollectionStatus.RUNNING.value),
+                "UPDATE coleta_executada "
+                "SET status = %s, "
+                "    finalizado_em = NOW(), "
+                "    error_summary = CONCAT(COALESCE(error_summary, ''), %s) "
+                "WHERE id = %s AND status = %s",
+                (
+                    CollectionStatus.FAILED.value,
+                    f"\n{motivo}",
+                    id_coleta,
+                    CollectionStatus.RUNNING.value,
+                ),
             )
-            novo_id = cursor.lastrowid
-
-    return novo_id
 
 
 async def finalizar_run(
@@ -65,8 +131,7 @@ async def buscar_por_id(id_coleta: int) -> ColetaExecutada | None:
     async with get_connection() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(
-                "SELECT id, trigger_type, iniciado_em, finalizado_em, status, "
-                "total_impressoras, impressoras_sucesso, impressora_falha, error_summary "
+                f"SELECT {_COLUNAS} "
                 "FROM coleta_executada "
                 "WHERE id = %s",
                 (id_coleta,),
@@ -86,8 +151,7 @@ async def buscar_ultima() -> ColetaExecutada | None:
     async with get_connection() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(
-                "SELECT id, trigger_type, iniciado_em, finalizado_em, status, "
-                "total_impressoras, impressoras_sucesso, impressora_falha, error_summary "
+                f"SELECT {_COLUNAS} "
                 "FROM coleta_executada "
                 "ORDER BY iniciado_em DESC "
                 "LIMIT 1"
@@ -107,8 +171,7 @@ async def listar_recentes(limite: int = 20) -> list[ColetaExecutada]:
     async with get_connection() as conn:
         async with conn.cursor(aiomysql.DictCursor) as cursor:
             await cursor.execute(
-                "SELECT id, trigger_type, iniciado_em, finalizado_em, status, "
-                "total_impressoras, impressoras_sucesso, impressora_falha, error_summary "
+                f"SELECT {_COLUNAS} "
                 "FROM coleta_executada "
                 "ORDER BY iniciado_em DESC "
                 "LIMIT %s",

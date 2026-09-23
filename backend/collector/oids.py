@@ -43,25 +43,49 @@ OID_SUPPLIES_MAX_CAPACITY = "1.3.6.1.2.1.43.11.1.1.8"
 OID_SUPPLIES_LEVEL = "1.3.6.1.2.1.43.11.1.1.9"
 """prtMarkerSuppliesLevel - nível atual, ou código negativo da RFC 3805."""
 
-# --- Contadores de página ---
+# ============================================================
+# Contadores de página
+#
+# São os dois números que hoje são anotados à mão na caixa do toner a
+# cada troca: TOTAL e CÓPIAS. Fazem parte do contexto de toda coleta -
+# cada leitura grava o valor do contador no instante em que foi lida, e
+# é isso que permite, na troca seguinte, calcular quantas páginas o
+# cartucho rendeu.
+#
+# Onde cada um é gravado:
+#
+#   leitura_toner.paginas_total    <- OID_MARKER_LIFE_COUNT (abaixo)
+#   leitura_toner.paginas_copias   <- SNMP_OID_CONTADOR_COPIAS (.env)
+#
+#   troca_toner.paginas_no_evento  <- paginas_total congelado na troca
+#   troca_toner.paginas_rendidas   <- diferença desde a troca anterior
+#   troca_toner.copias_no_evento   <- paginas_copias congelado na troca
+#   troca_toner.copias_rendidas    <- diferença desde a troca anterior
+# ============================================================
+
 OID_MARKER_LIFE_COUNT = "1.3.6.1.2.1.43.10.2.1.4"
 """
 prtMarkerLifeCount - total de páginas marcadas desde a fabricação.
 
-É o contador universal e é o que alimenta `paginas_total`.
+É o contador universal da Printer-MIB e alimenta `paginas_total`. Fica
+fixo aqui, e não em configuração, justamente por ser padrão: vale para
+qualquer fabricante, então não há o que ajustar por parque.
 """
 
-# --- Contadores Canon (MIB privada, ramo 1.3.6.1.4.1.1602) ---
-# A Printer-MIB padrão NÃO separa impressão de cópia: só existe o total
-# (prtMarkerLifeCount). A Canon expõe os contadores por função em MIB
-# privada, e os OIDs variam por série do equipamento.
+# --- Contador de CÓPIAS ---
+# A Printer-MIB NÃO separa cópia de impressão: só existe o total. O
+# contador de cópias existe apenas na MIB privada do fabricante (na
+# Canon, sob BASE_PRIVADA_CANON) e o OID varia por série do equipamento.
 #
-# Deixado como None de propósito: chutar um OID privado devolve um
-# número errado silenciosamente, o que é pior para o relatório do que
-# não ter o dado. Preencher depois de rodar descobrir_oids_canon.py
-# contra uma impressora real do parque.
-OID_CANON_CONTADOR_COPIAS: str | None = None
-"""Contador de cópias da Canon. Pendente de descoberta em hardware real."""
+# Por isso ele NÃO é uma constante deste arquivo: mora na variável de
+# ambiente SNMP_OID_CONTADOR_COPIAS, lida por config.py e consumida por
+# snmp_client.py. Assim o valor descoberto em campo é preenchido no
+# servidor, sem alterar código.
+#
+# Enquanto estiver vazio, `paginas_copias` fica NULL e o relatório
+# trabalha só com o total. Chutar um OID privado seria pior: a
+# impressora responderia um número plausível de outra coisa e o
+# relatório passaria a mentir em silêncio.
 
 BASE_PRIVADA_CANON = "1.3.6.1.4.1.1602"
-"""Raiz da MIB privada Canon, usada pelo script de descoberta."""
+"""Raiz da MIB privada Canon, ponto de partida de descobrir_oids_canon.py."""

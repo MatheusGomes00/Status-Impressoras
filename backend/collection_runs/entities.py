@@ -13,6 +13,17 @@ from datetime import datetime
 from enum import Enum
 
 
+class ColetaEmAndamento(RuntimeError):
+    """
+    Levantada quando já existe uma coleta em execução.
+
+    Não é um erro de programação nem de infraestrutura: é o resultado
+    esperado quando o agendador dispara enquanto alguém roda uma coleta
+    manual (ou vice-versa). Quem chama deve tratar como "pulei esta
+    rodada" e seguir, não como falha.
+    """
+
+
 class TriggerType(str, Enum):
     """Espelha o ENUM('SCHEDULED', 'MANUAL') da coluna trigger_type."""
     SCHEDULED = "SCHEDULED"

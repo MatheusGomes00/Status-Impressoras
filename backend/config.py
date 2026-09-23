@@ -49,6 +49,61 @@ def _get_env_int(key: str, default: int) -> int:
         )
 
 
+def _get_env_oid(key: str) -> str | None:
+    """
+    Lê um OID opcional do ambiente, validando o formato.
+
+    Valida na carga (e não no meio de uma coleta) porque um OID digitado
+    errado só se manifestaria como "a impressora não respondeu esse
+    contador", que é exatamente o sintoma de um OID inexistente - e aí
+    ninguém descobriria que a causa foi um ponto a mais no .env.
+    """
+    valor = os.getenv(key, "").strip()
+    if not valor:
+        return None
+
+    if not all(parte.isdigit() for parte in valor.split(".")):
+        raise RuntimeError(
+            f"Variável de ambiente '{key}' deveria ser um OID numérico "
+            f"(ex: 1.3.6.1.4.1.1602.1.11.1.3.1.4.1), mas veio '{valor}'."
+        )
+    return valor
+
+
+def _get_env_horarios(key: str, default: str) -> tuple[tuple[int, int], ...]:
+    """
+    Lê uma lista de horários "HH:MM,HH:MM" e devolve pares (hora, minuto).
+
+    Valida na carga para que um horário digitado errado derrube o
+    agendador na partida, com mensagem clara, em vez de silenciosamente
+    nunca disparar a coleta daquele horário.
+    """
+    bruto = os.getenv(key, "").strip() or default
+
+    horarios: list[tuple[int, int]] = []
+    for pedaco in bruto.split(","):
+        pedaco = pedaco.strip()
+        if not pedaco:
+            continue
+        try:
+            hora_str, minuto_str = pedaco.split(":")
+            hora, minuto = int(hora_str), int(minuto_str)
+        except ValueError:
+            raise RuntimeError(
+                f"Variável de ambiente '{key}' tem o horário '{pedaco}' em "
+                f"formato inválido. Use HH:MM separados por vírgula "
+                f"(ex: 09:00,13:00,17:00)."
+            )
+        if not (0 <= hora <= 23 and 0 <= minuto <= 59):
+            raise RuntimeError(
+                f"Variável de ambiente '{key}' tem o horário '{pedaco}' fora "
+                f"da faixa válida (00:00 a 23:59)."
+            )
+        horarios.append((hora, minuto))
+
+    return tuple(horarios)
+
+
 @dataclass(frozen=True)
 class DatabaseConfig:
     host: str
@@ -66,6 +121,14 @@ class SnmpConfig:
     timeout_seconds: int
     retries: int
     port: int
+    # OID do contador de CÓPIAS. Fica em configuração, e não em
+    # collector/oids.py, porque é o único OID da coleta que não é padrão:
+    # a Printer-MIB não separa cópia de impressão, esse contador só existe
+    # na MIB privada do fabricante e varia por série do equipamento.
+    # Deixar aqui permite preencher no servidor, depois de descobrir o
+    # valor com descobrir_oids_canon.py, sem alterar código.
+    # Vazio = não coletar cópias (paginas_copias fica NULL).
+    oid_contador_copias: str | None
 
 
 @dataclass(frozen=True)
@@ -76,6 +139,16 @@ class CollectorConfig:
     # reportado pela impressora oscila alguns pontos para cima sem que
     # nada tenha sido trocado (medição por estimativa, agitação do toner).
     limiar_troca_toner_pp: int
+    # Após quantos minutos uma coleta presa em RUNNING é considerada
+    # processo morto e encerrada como FAILED, liberando as próximas.
+    timeout_coleta_minutos: int
+
+
+@dataclass(frozen=True)
+class SchedulerConfig:
+    # Horários das coletas diárias, como pares (hora, minuto).
+    horarios: tuple[tuple[int, int], ...]
+    timezone: str
 
 
 @dataclass(frozen=True)
@@ -83,6 +156,7 @@ class Settings:
     database: DatabaseConfig
     snmp: SnmpConfig
     collector: CollectorConfig
+    scheduler: SchedulerConfig
 
 
 def _validar(settings: "Settings") -> None:
@@ -112,6 +186,17 @@ def _validar(settings: "Settings") -> None:
             f"COLLECTOR_LIMIAR_TROCA_TONER_PP deve estar entre 1 e 100, "
             f"mas veio {settings.collector.limiar_troca_toner_pp}."
         )
+    if settings.collector.timeout_coleta_minutos <= 0:
+        raise RuntimeError(
+            f"COLLECTOR_TIMEOUT_COLETA_MINUTOS inválido: "
+            f"{settings.collector.timeout_coleta_minutos}"
+        )
+
+    if not settings.scheduler.horarios:
+        raise RuntimeError(
+            "SCHEDULER_HORARIOS não pode ficar vazio: informe ao menos um "
+            "horário no formato HH:MM (ex: 09:00,13:00,17:00)."
+        )
 
 
 def load_settings() -> Settings:
@@ -131,6 +216,7 @@ def load_settings() -> Settings:
         timeout_seconds=_get_env_int("SNMP_TIMEOUT_SECONDS", default=3),
         retries=_get_env_int("SNMP_RETRIES", default=1),
         port=_get_env_int("SNMP_PORT", default=161),
+        oid_contador_copias=_get_env_oid("SNMP_OID_CONTADOR_COPIAS"),
     )
 
     collector = CollectorConfig(
@@ -140,9 +226,22 @@ def load_settings() -> Settings:
         limiar_troca_toner_pp=_get_env_int(
             "COLLECTOR_LIMIAR_TROCA_TONER_PP", default=20
         ),
+        timeout_coleta_minutos=_get_env_int(
+            "COLLECTOR_TIMEOUT_COLETA_MINUTOS", default=30
+        ),
     )
 
-    settings = Settings(database=database, snmp=snmp, collector=collector)
+    scheduler = SchedulerConfig(
+        horarios=_get_env_horarios("SCHEDULER_HORARIOS", default="09:00,13:00,17:00"),
+        timezone=_get_env("SCHEDULER_TIMEZONE", default="America/Sao_Paulo"),
+    )
+
+    settings = Settings(
+        database=database,
+        snmp=snmp,
+        collector=collector,
+        scheduler=scheduler,
+    )
     _validar(settings)
     return settings
 
@@ -162,5 +261,13 @@ if __name__ == "__main__":
           f"max={settings.database.pool_max_size}")
     print(f"  SNMP: community='{settings.snmp.default_community}' "
           f"timeout={settings.snmp.timeout_seconds}s retries={settings.snmp.retries}")
+    print(f"  Contador de cópias: "
+          f"{settings.snmp.oid_contador_copias or 'não configurado (paginas_copias ficará NULL)'}")
     print(f"  Coletor: max_concurrent_requests="
-          f"{settings.collector.max_concurrent_requests}")
+          f"{settings.collector.max_concurrent_requests} "
+          f"limiar_troca={settings.collector.limiar_troca_toner_pp}pp "
+          f"timeout_coleta={settings.collector.timeout_coleta_minutos}min")
+    horarios = ", ".join(
+        f"{hora:02d}:{minuto:02d}" for hora, minuto in settings.scheduler.horarios
+    )
+    print(f"  Agendador: {horarios} ({settings.scheduler.timezone}), todos os dias")

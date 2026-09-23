@@ -2,10 +2,10 @@
 # Dependências do backend
 # Instalar com: pip install -r requirements.txt
 #
-# Escopo atual: Fases 1 a 4 do cronograma (fundação, repositórios,
-# coletor SNMP e execução manual via CLI) - ver docs/CRONOGRAMA.md.
-# As dependências das fases seguintes (pytest, APScheduler, FastAPI)
-# serão adicionadas quando chegarmos nesses artefatos.
+# Escopo atual: Fases 1 a 6 do cronograma (fundação, repositórios,
+# coletor SNMP, CLI, testes e agendamento) - ver docs/CRONOGRAMA.md.
+# As dependências da API (FastAPI, uvicorn) serão adicionadas quando
+# chegarmos nesse artefato.
 # ============================================================
 
 # --- Banco de dados ---
@@ -14,3 +14,11 @@ python-dotenv==1.2.2       # carrega variáveis do arquivo .env
 
 # --- Coleta SNMP ---
 pysnmp==7.1.27              # cliente SNMP assíncrono (já validado no MVP)
+
+# --- Agendamento ---
+APScheduler==3.11.0        # coletas diárias às 09h/13h/17h
+
+# --- Testes ---
+# Rodar com: pytest
+pytest==8.4.2
+pytest-asyncio==1.2.0      # suporte a testes de funções async

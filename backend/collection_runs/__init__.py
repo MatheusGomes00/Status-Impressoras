@@ -10,6 +10,16 @@ Uso recomendado por outros domínios/módulos:
     from collection_runs.service import iniciar_coleta, finalizar_coleta
 """
 
-from collection_runs.entities import ColetaExecutada, CollectionStatus, TriggerType
+from collection_runs.entities import (
+    ColetaEmAndamento,
+    ColetaExecutada,
+    CollectionStatus,
+    TriggerType,
+)
 
-__all__ = ["ColetaExecutada", "CollectionStatus", "TriggerType"]
+__all__ = [
+    "ColetaEmAndamento",
+    "ColetaExecutada",
+    "CollectionStatus",
+    "TriggerType",
+]

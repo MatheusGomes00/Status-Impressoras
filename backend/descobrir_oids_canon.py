@@ -11,8 +11,8 @@ do equipamento.
 
 Chutar um OID privado é pior que não ter o dado: a impressora responde
 um número plausível de outra coisa e o relatório passa a mentir em
-silêncio. Por isso o OID de cópias fica como None em collector/oids.py
-até ser confirmado contra uma impressora real.
+silêncio. Por isso SNMP_OID_CONTADOR_COPIAS nasce vazio no .env e só é
+preenchido depois de confirmado contra uma impressora real.
 
 Como usar
 ---------
@@ -71,8 +71,11 @@ async def _main(ip: str, base_oid: str, apenas_numericos: bool) -> None:
 
     print(f"\n{exibidos} valor(es) exibido(s) de {len(valores)} encontrado(s).")
     print(
-        "Compare com o painel da impressora e preencha o OID de cópias em "
-        "collector/oids.py (OID_CANON_CONTADOR_COPIAS)."
+        "Compare os valores com os contadores do painel da impressora.\n"
+        "O OID cujo valor bater com o contador de CÓPIAS deve ser gravado "
+        "no .env do servidor:\n\n"
+        "    SNMP_OID_CONTADOR_COPIAS=<oid completo, com o índice>\n\n"
+        "A partir daí a coleta passa a preencher leitura_toner.paginas_copias."
     )
 
 

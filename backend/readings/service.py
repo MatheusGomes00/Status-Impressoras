@@ -127,6 +127,18 @@ def _para_int(bruto: str | None) -> int | None:
         return None
 
 
+def nivel_e_mensuravel(nivel_bruto: int, capacidade_max: int) -> bool:
+    """
+    True quando o par (nível, capacidade) permite calcular um percentual.
+
+    É falso nos códigos especiais da RFC 3805 - nível negativo (-1 outro,
+    -2 desconhecido, -3 "resta alguma coisa") ou capacidade <= 0. Esses
+    códigos são a forma mais comum de um cartucho paralelo dizer que não
+    sabe informar o nível.
+    """
+    return nivel_bruto >= 0 and capacidade_max > 0
+
+
 def interpretar_leitura(
     indice_suprimento: int,
     nivel_bruto_str: str | None,
@@ -139,26 +151,39 @@ def interpretar_leitura(
     """
     Converte os valores brutos (strings, como vêm do SNMP) em uma
     LeituraPendente, decidindo o status:
-      - 'nao_reportado' -> cartucho paralelo/OID não implementado: o valor
-                           veio vazio, '*', '-%' ou equivalente
+      - 'ok'            -> o nível foi lido e é um percentual de verdade
+      - 'nao_reportado' -> a impressora respondeu, mas não informou nível:
+                           valor vazio/'*'/'-%', OID não implementado, ou
+                           código especial da RFC 3805 (nível negativo,
+                           capacidade <= 0)
       - 'erro'          -> resposta em formato realmente inesperado, ou o
                            índice existe na tabela de níveis mas não na de
                            capacidades (MIB inconsistente)
-      - 'ok'            -> valores interpretados com sucesso, mesmo que o
-                           percentual não seja medível (nivel_percentual=None,
-                           caso dos códigos especiais da RFC 3805)
 
     'sem_resposta' não é decidido aqui - só existe quando a impressora
     inteira não respondeu à consulta SNMP (ver montar_leitura_sem_resposta).
+
+    POR QUE código especial da RFC 3805 é 'nao_reportado' e não 'ok'
+    ---------------------------------------------------------------
+    Um cartucho paralelo costuma responder o código -2 (desconhecido) ou
+    -3 no lugar do nível - é isso que a interface da impressora acaba
+    exibindo como "-%". Classificar esse caso como 'ok' com
+    nivel_percentual NULL deixava o paralelo indistinguível de um
+    suprimento que legitimamente não é medível, e fazia o relatório de
+    "onde há paralelo" não encontrar nada.
+
+    Os valores crus continuam gravados (nivel_bruto guarda o -2), então
+    nada se perde: o código especial segue disponível para diagnóstico.
     """
     nivel_bruto = _para_int(nivel_bruto_str)
     capacidade_max = _para_int(capacidade_max_str)
+    tipo_suprimento = _para_int(tipo_suprimento_str)
 
     if nivel_bruto is None:
         return LeituraPendente(
             indice_suprimento=indice_suprimento,
             descricao_suprimento=descricao_suprimento,
-            tipo_suprimento=_para_int(tipo_suprimento_str),
+            tipo_suprimento=tipo_suprimento,
             nivel_bruto=None,
             capacidade_max=capacidade_max,
             nivel_percentual=None,
@@ -175,7 +200,7 @@ def interpretar_leitura(
         return LeituraPendente(
             indice_suprimento=indice_suprimento,
             descricao_suprimento=descricao_suprimento,
-            tipo_suprimento=_para_int(tipo_suprimento_str),
+            tipo_suprimento=tipo_suprimento,
             nivel_bruto=nivel_bruto,
             capacidade_max=None,
             nivel_percentual=None,
@@ -184,16 +209,20 @@ def interpretar_leitura(
             status=ReadingStatus.ERRO,
         )
 
+    mensuravel = nivel_e_mensuravel(nivel_bruto, capacidade_max)
+
     return LeituraPendente(
         indice_suprimento=indice_suprimento,
         descricao_suprimento=descricao_suprimento,
-        tipo_suprimento=_para_int(tipo_suprimento_str),
+        tipo_suprimento=tipo_suprimento,
         nivel_bruto=nivel_bruto,
         capacidade_max=capacidade_max,
-        nivel_percentual=calcular_percentual(nivel_bruto, capacidade_max),
+        nivel_percentual=(
+            calcular_percentual(nivel_bruto, capacidade_max) if mensuravel else None
+        ),
         paginas_total=paginas_total,
         paginas_copias=paginas_copias,
-        status=ReadingStatus.OK,
+        status=ReadingStatus.OK if mensuravel else ReadingStatus.NAO_REPORTADO,
     )
 
 

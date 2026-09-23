@@ -151,6 +151,11 @@ async def executar_coleta(
 
     `apenas_ips` restringe a rodada a impressoras específicas - usado
     pelo cli.py para diagnosticar uma máquina isolada sem disparar as 66.
+
+    Levanta ColetaEmAndamento se outra coleta já estiver rodando. A
+    exceção é propagada de propósito, em vez de tratada aqui: o cli.py
+    quer avisar o operador na tela, e o agendador quer apenas registrar
+    que pulou a rodada. Quem chama sabe o que fazer; este módulo não.
     """
     impressoras = await printers_service.listar_impressoras_ativas()
 

@@ -188,7 +188,32 @@ alguém "simplificasse".
 
 ---
 
-## 12. Segurança
+## 12. Testes
+
+- Ficam em `backend/tests/`, um arquivo por módulo testado
+  (`test_readings_service.py`, `test_collector_service.py`, ...).
+- Rodam com `pytest`, a partir de `backend/`. A configuração está em
+  `pytest.ini`.
+- Agrupados em classes `TestAlgumaCoisa`, para que a saída do pytest já
+  diga qual comportamento quebrou.
+- **Nenhum teste depende do parque de impressoras nem do banco.** A
+  consulta SNMP e os repositories são substituídos por dublês. Um teste
+  que precisa da rede do hospital é um teste que ninguém roda.
+- Dublês com `unittest.mock` (biblioteca padrão), não com o fixture
+  `monkeypatch` do pytest — assim os testes continuam executáveis fora
+  do pytest quando for preciso.
+- O nome do teste descreve o comportamento em português, não a função:
+  `test_caixa_de_residuo_nao_gera_troca`, não `test_detectar_trocas_2`.
+- Quando o teste existe para impedir a volta de um bug específico, o
+  comentário diz qual era o bug. Exemplo, em
+  `test_nenhum_suprimento_some_quando_falta_par`: "com zip(), o
+  suprimento sem par desaparecia silenciosamente".
+- Testes que exigem hardware real são uma categoria à parte e ficam fora
+  da suíte padrão — ver Fase 5B em [CRONOGRAMA.md](CRONOGRAMA.md).
+
+---
+
+## 13. Segurança
 
 - `.env` nunca vai para o Git (já coberto pelo `.gitignore`);
   `.env.example` vai, sempre com valores de exemplo.

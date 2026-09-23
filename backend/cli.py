@@ -21,14 +21,26 @@ Uso:
     python cli.py --ip 10.165.20.133           # só uma impressora
     python cli.py --ip 10.165.20.133 --dry-run # consulta e mostra, sem gravar
     python cli.py --ultima                     # só mostra o resultado da última coleta
+    python cli.py --agendada                   # registra como SCHEDULED
+
+Código de saída: 0 em sucesso ou coleta parcial, 1 quando a coleta
+termina em FAILED. É o que permite ao Agendador de Tarefas do Windows
+sinalizar a rodada como falha, caso esse seja o modo de execução
+escolhido para produção (ver docs/CRONOGRAMA.md, Fase 6).
 """
 
 import argparse
 import asyncio
 import logging
+import sys
 
 from collection_runs import service as collection_runs_service
-from collection_runs.entities import ColetaExecutada, TriggerType
+from collection_runs.entities import (
+    ColetaEmAndamento,
+    ColetaExecutada,
+    CollectionStatus,
+    TriggerType,
+)
 from collector.service import executar_coleta
 from collector.snmp_client import consultar_impressora
 from database import close_pool
@@ -105,21 +117,42 @@ async def _dry_run(ips: list[str] | None) -> None:
             )
 
 
-async def _main(args: argparse.Namespace) -> None:
+async def _main(args: argparse.Namespace) -> int:
+    """
+    Devolve o código de saída do processo.
+
+    Sai com 1 quando a coleta termina em FAILED, para que o Agendador de
+    Tarefas do Windows consiga sinalizar a rodada como falha em vez de
+    registrar sucesso silencioso. PARTIAL sai com 0: algumas impressoras
+    desligadas é o dia a dia normal, não um erro que mereça alarme.
+    """
     try:
         if args.ultima:
             _mostrar_coleta(await collection_runs_service.obter_ultima_coleta())
-            return
+            return 0
 
         if args.dry_run:
             await _dry_run(args.ip)
-            return
+            return 0
 
-        coleta = await executar_coleta(
-            trigger_type=TriggerType.MANUAL,
-            apenas_ips=args.ip,
-        )
+        try:
+            coleta = await executar_coleta(
+                trigger_type=(
+                    TriggerType.SCHEDULED if args.agendada else TriggerType.MANUAL
+                ),
+                apenas_ips=args.ip,
+            )
+        except ColetaEmAndamento:
+            em_andamento = await collection_runs_service.obter_coleta_em_andamento()
+            print(
+                "Já existe uma coleta em execução - nada foi gravado.\n"
+                "Provavelmente o agendador disparou agora. Aguarde ela terminar."
+            )
+            _mostrar_coleta(em_andamento)
+            return 0
+
         _mostrar_coleta(coleta)
+        return 1 if coleta.status is CollectionStatus.FAILED else 0
     finally:
         await close_pool()
 
@@ -144,6 +177,15 @@ if __name__ == "__main__":
         help="Apenas exibe o resultado da última coleta registrada.",
     )
     parser.add_argument(
+        "--agendada",
+        action="store_true",
+        help=(
+            "Registra a coleta como SCHEDULED em vez de MANUAL. Use quando "
+            "quem dispara é o Agendador de Tarefas do Windows, para que o "
+            "histórico não classifique a rodada como feita à mão."
+        ),
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Mostra o log detalhado da coleta.",
@@ -155,4 +197,4 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
     )
 
-    asyncio.run(_main(argumentos))
+    sys.exit(asyncio.run(_main(argumentos)))

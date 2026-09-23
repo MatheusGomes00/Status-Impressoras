@@ -245,9 +245,13 @@ async def consultar_impressora(
     # deixar o INSERT falhar no meio de uma coleta.
     modelo = (_primeiro_valor(nome) or texto_sys_descr or "").strip()[:100] or None
 
+    # O contador de cópias é consultado à parte porque seu OID é
+    # opcional: só existe na MIB privada do fabricante e vem do .env
+    # (SNMP_OID_CONTADOR_COPIAS). Sem ele configurado, a coleta segue
+    # normalmente e `paginas_copias` fica NULL.
     paginas_copias = None
-    if oids.OID_CANON_CONTADOR_COPIAS:
-        resultado_copias = await walk(oids.OID_CANON_CONTADOR_COPIAS)
+    if settings.snmp.oid_contador_copias:
+        resultado_copias = await walk(settings.snmp.oid_contador_copias)
         paginas_copias = _primeiro_inteiro(resultado_copias)
 
     return ColetaSnmp(
