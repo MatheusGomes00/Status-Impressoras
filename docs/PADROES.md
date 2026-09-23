@@ -190,6 +190,9 @@ alguém "simplificasse".
 
 ## 12. Testes
 
+Detalhamento completo da suíte em [TESTES.md](TESTES.md). O resumo das
+regras:
+
 - Ficam em `backend/tests/`, um arquivo por módulo testado
   (`test_readings_service.py`, `test_collector_service.py`, ...).
 - Rodam com `pytest`, a partir de `backend/`. A configuração está em

@@ -37,6 +37,7 @@ backend/
 docs/
     PADROES.md                padrões a seguir ao alterar o código
     COLETA_SNMP.md            o que é perguntado às impressoras e por quê
+    TESTES.md                 o que a suíte cobre e o que ficou de fora
     CRONOGRAMA.md             fases, estado atual e decisões em aberto
 ```
 

@@ -53,6 +53,9 @@ cd backend
 pytest
 ```
 
+Mapa completo do que cada teste protege, e a lista do que ficou **fora**
+da cobertura, em [TESTES.md](TESTES.md).
+
 **Decisão registrada: os testes não dependem do parque.**
 
 Um teste que consulta as 66 impressoras de verdade só roda dentro da rede
