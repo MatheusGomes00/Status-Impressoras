@@ -54,7 +54,8 @@ OID_SUPPLIES_LEVEL = "1.3.6.1.2.1.43.11.1.1.9"
 #
 # Onde cada um é gravado:
 #
-#   leitura_toner.paginas_total    <- OID_MARKER_LIFE_COUNT (abaixo)
+#   leitura_toner.paginas_total    <- SNMP_OID_CONTADOR_TOTAL (.env), ou
+#                                     OID_MARKER_LIFE_COUNT (abaixo) se vazio
 #   leitura_toner.paginas_copias   <- SNMP_OID_CONTADOR_COPIAS (.env)
 #
 #   troca_toner.paginas_no_evento  <- paginas_total congelado na troca
@@ -67,9 +68,10 @@ OID_MARKER_LIFE_COUNT = "1.3.6.1.2.1.43.10.2.1.4"
 """
 prtMarkerLifeCount - total de páginas marcadas desde a fabricação.
 
-É o contador universal da Printer-MIB e alimenta `paginas_total`. Fica
-fixo aqui, e não em configuração, justamente por ser padrão: vale para
-qualquer fabricante, então não há o que ajustar por parque.
+É o contador universal da Printer-MIB e alimenta `paginas_total` quando
+SNMP_OID_CONTADOR_TOTAL está vazio. Na Canon do parque ele NÃO bate com
+o total do painel (Fase 4B.3), por isso o .env do servidor aponta para o
+contador Canon 101 e este fica só como padrão para outros fabricantes.
 """
 
 # --- Contador de CÓPIAS ---

@@ -129,6 +129,12 @@ class SnmpConfig:
     # valor com descobrir_oids_canon.py, sem alterar código.
     # Vazio = não coletar cópias (paginas_copias fica NULL).
     oid_contador_copias: str | None
+    # OID do contador TOTAL. Opcional pelo mesmo motivo: o padrão é o
+    # prtMarkerLifeCount da Printer-MIB, mas na Canon ele diverge do
+    # total do painel (Fase 4B.3: 2913 no SNMP padrão contra 2926 no
+    # painel e no contador Canon 101). Preenchido, substitui o padrão.
+    # Vazio = usar prtMarkerLifeCount.
+    oid_contador_total: str | None
 
 
 @dataclass(frozen=True)
@@ -217,6 +223,7 @@ def load_settings() -> Settings:
         retries=_get_env_int("SNMP_RETRIES", default=1),
         port=_get_env_int("SNMP_PORT", default=161),
         oid_contador_copias=_get_env_oid("SNMP_OID_CONTADOR_COPIAS"),
+        oid_contador_total=_get_env_oid("SNMP_OID_CONTADOR_TOTAL"),
     )
 
     collector = CollectorConfig(
@@ -263,6 +270,8 @@ if __name__ == "__main__":
           f"timeout={settings.snmp.timeout_seconds}s retries={settings.snmp.retries}")
     print(f"  Contador de cópias: "
           f"{settings.snmp.oid_contador_copias or 'não configurado (paginas_copias ficará NULL)'}")
+    print(f"  Contador total: "
+          f"{settings.snmp.oid_contador_total or 'prtMarkerLifeCount (padrão)'}")
     print(f"  Coletor: max_concurrent_requests="
           f"{settings.collector.max_concurrent_requests} "
           f"limiar_troca={settings.collector.limiar_troca_toner_pp}pp "

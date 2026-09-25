@@ -32,8 +32,10 @@ from pysnmp.hlapi.v3arch.asyncio import (
     ObjectType,
     SnmpEngine,
     UdpTransportTarget,
+    get_cmd,
     walk_cmd,
 )
+from pysnmp.proto.rfc1905 import EndOfMibView, NoSuchInstance, NoSuchObject
 
 from collector import oids
 from config import settings
@@ -118,6 +120,54 @@ async def _walk_oid(
                 sufixo = oid_str[len(base_oid):].lstrip(".")
                 valores[sufixo] = value.prettyPrint()
 
+    except Exception as excecao:
+        erro = f"{type(excecao).__name__}: {excecao}"
+    finally:
+        engine.close_dispatcher()
+
+    return _ResultadoWalk(valores=valores, erro=erro)
+
+
+async def _get_oid(
+    ip: str,
+    community: str,
+    oid: str,
+    port: int,
+    timeout: int,
+    retries: int,
+) -> _ResultadoWalk:
+    """
+    Lê um único OID completo (com o índice da linha) e devolve {"": valor}.
+
+    Existe para os contadores do .env, que são configurados já com o
+    índice: um walk a partir de um OID folha devolve o que vem DEPOIS
+    dele, nunca ele mesmo, e o contador saía sempre None. O formato de
+    retorno é o mesmo do walk para que _primeiro_inteiro sirva aos dois.
+    """
+    engine = SnmpEngine()
+    valores: dict[str, str] = {}
+    erro: str | None = None
+
+    try:
+        transport = await UdpTransportTarget.create(
+            (ip, port), timeout=timeout, retries=retries
+        )
+        errorIndication, errorStatus, _, varBinds = await get_cmd(
+            engine,
+            CommunityData(community, mpModel=0),  # mpModel=0 -> SNMPv1
+            transport,
+            ContextData(),
+            ObjectType(ObjectIdentity(oid)),
+        )
+        # Em SNMPv1, OID inexistente chega como errorStatus (noSuchName);
+        # os marcadores NoSuch*/EndOfMibView cobrem agentes que respondem
+        # no estilo v2c mesmo assim.
+        if errorIndication or errorStatus:
+            erro = str(errorIndication or errorStatus)
+        else:
+            for _, value in varBinds:
+                if not isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
+                    valores[""] = value.prettyPrint()
     except Exception as excecao:
         erro = f"{type(excecao).__name__}: {excecao}"
     finally:
@@ -211,6 +261,18 @@ async def consultar_impressora(
     async def walk(base_oid: str) -> _ResultadoWalk:
         return await _walk_oid(ip, community, base_oid, port, timeout, retries)
 
+    async def get(oid: str) -> _ResultadoWalk:
+        return await _get_oid(ip, community, oid, port, timeout, retries)
+
+    # Configurado no .env, o total vem por get do OID exato; senão, walk
+    # da tabela prtMarkerLifeCount. Sem recair no padrão quando o OID
+    # configurado não responde: as duas fontes divergem, e misturá-las
+    # entre coletas faria paginas_rendidas somar ou perder a diferença.
+    if settings.snmp.oid_contador_total:
+        consulta_total = get(settings.snmp.oid_contador_total)
+    else:
+        consulta_total = walk(oids.OID_MARKER_LIFE_COUNT)
+
     (
         serial,
         sys_descr,
@@ -228,7 +290,7 @@ async def consultar_impressora(
         walk(oids.OID_SUPPLIES_MAX_CAPACITY),
         walk(oids.OID_SUPPLIES_DESCRIPTION),
         walk(oids.OID_SUPPLIES_TYPE),
-        walk(oids.OID_MARKER_LIFE_COUNT),
+        consulta_total,
     )
 
     resultados = (serial, sys_descr, nome, niveis, capacidades, descricoes, tipos, paginas)
@@ -251,7 +313,7 @@ async def consultar_impressora(
     # normalmente e `paginas_copias` fica NULL.
     paginas_copias = None
     if settings.snmp.oid_contador_copias:
-        resultado_copias = await walk(settings.snmp.oid_contador_copias)
+        resultado_copias = await get(settings.snmp.oid_contador_copias)
         paginas_copias = _primeiro_inteiro(resultado_copias)
 
     return ColetaSnmp(
