@@ -15,7 +15,8 @@ Duas diferenças em relação ao MVP, ambas deliberadas:
 
 2. O SnmpEngine é fechado em `finally`. No MVP ele era fechado só no
    caminho feliz; numa coleta de 66 impressoras, cada timeout deixaria
-   um engine pendurado.
+   um engine pendurado. E é um por impressora, não um por consulta:
+   criá-lo é caro e síncrono (ver consultar_impressora).
 
 Nenhuma regra de interpretação mora aqui: este módulo entrega os valores
 crus e quem decide o que eles significam é readings/service.py.
@@ -101,6 +102,7 @@ async def _walk_oid(
     port: int,
     timeout: int,
     retries: int,
+    engine: SnmpEngine | None = None,
 ) -> _ResultadoWalk:
     """
     Faz o walk de uma tabela e devolve {sufixo_do_oid: valor}.
@@ -110,7 +112,10 @@ async def _walk_oid(
     o sufixo é "1.2". É a chave da linha na MIB, e é o que permite
     casar as tabelas de suprimento entre si.
     """
-    engine = SnmpEngine()
+    # Sem engine recebido, cria e fecha o seu (uso avulso, como no
+    # walk_diagnostico); recebido, quem criou é quem fecha.
+    proprio = engine is None
+    engine = engine or SnmpEngine()
     valores: dict[str, str] = {}
     erro: str | None = None
 
@@ -146,7 +151,8 @@ async def _walk_oid(
     except Exception as excecao:
         erro = f"{type(excecao).__name__}: {excecao}"
     finally:
-        engine.close_dispatcher()
+        if proprio:
+            engine.close_dispatcher()
 
     return _ResultadoWalk(valores=valores, erro=erro)
 
@@ -158,6 +164,7 @@ async def _get_oid(
     port: int,
     timeout: int,
     retries: int,
+    engine: SnmpEngine | None = None,
 ) -> _ResultadoWalk:
     """
     Lê um único OID completo (com o índice da linha) e devolve {"": valor}.
@@ -167,7 +174,10 @@ async def _get_oid(
     dele, nunca ele mesmo, e o contador saía sempre None. O formato de
     retorno é o mesmo do walk para que _primeiro_inteiro sirva aos dois.
     """
-    engine = SnmpEngine()
+    # Sem engine recebido, cria e fecha o seu (uso avulso, como no
+    # walk_diagnostico); recebido, quem criou é quem fecha.
+    proprio = engine is None
+    engine = engine or SnmpEngine()
     valores: dict[str, str] = {}
     erro: str | None = None
 
@@ -199,7 +209,8 @@ async def _get_oid(
     except Exception as excecao:
         erro = f"{type(excecao).__name__}: {excecao}"
     finally:
-        engine.close_dispatcher()
+        if proprio:
+            engine.close_dispatcher()
 
     return _ResultadoWalk(valores=valores, erro=erro)
 
@@ -300,16 +311,35 @@ async def consultar_impressora(
     listado em `consultas_em_branco`. Não é o retry que a Fase 6 decidiu
     não fazer: aquele seria para impressora que não respondeu nada.
     """
-    community = community or settings.snmp.default_community
-    port = port or settings.snmp.port
+    # Um SnmpEngine por impressora, compartilhado pelas consultas dela.
+    # Criar um engine custa ~0,09 s de CPU síncrona, que trava o event
+    # loop: com um por consulta eram ~600 na coleta, quase um minuto em
+    # que nenhuma outra impressora avançava.
+    engine = SnmpEngine()
+    try:
+        return await _consultar(
+            ip,
+            community or settings.snmp.default_community,
+            port or settings.snmp.port,
+            engine,
+        )
+    finally:
+        engine.close_dispatcher()
+
+
+async def _consultar(
+    ip: str, community: str, port: int, engine: SnmpEngine
+) -> ColetaSnmp:
     timeout = settings.snmp.timeout_seconds
     retries = settings.snmp.retries
 
     def walk(base_oid: str) -> Callable[[], Awaitable[_ResultadoWalk]]:
-        return lambda: _walk_oid(ip, community, base_oid, port, timeout, retries)
+        return lambda: _walk_oid(
+            ip, community, base_oid, port, timeout, retries, engine
+        )
 
     def get(oid: str) -> Callable[[], Awaitable[_ResultadoWalk]]:
-        return lambda: _get_oid(ip, community, oid, port, timeout, retries)
+        return lambda: _get_oid(ip, community, oid, port, timeout, retries, engine)
 
     consultas = {
         "numero_serie": walk(oids.OID_SERIAL_NUMBER),
