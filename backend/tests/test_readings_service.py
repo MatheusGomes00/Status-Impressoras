@@ -88,6 +88,42 @@ class TestTonerParalelo:
         assert leitura.capacidade_max == 1000
 
 
+class TestParqueObservado:
+    """
+    Valores reais do parque, colhidos na Fase 4B.2 com duas Canon
+    iR1643i II: 10.165.22.54 (T06 original, painel mostrando 80%) e
+    10.165.22.45 (T06 paralelo, painel mostrando "-%").
+
+    Confirmou a hipótese mais provável: o paralelo responde com o código
+    especial -2 da RFC 3805, e não com um valor numérico fixo que
+    passaria como 'ok'. Se este teste quebrar, a detecção de paralelo
+    voltou a errar com o que o parque de fato envia.
+    """
+
+    def _leitura(self, nivel: str):
+        [leitura] = montar_leituras_snmp(
+            niveis={"1.1": nivel},
+            capacidades={"1.1": "100"},
+            descricoes={"1.1": "Canon Toner T06 Black"},
+            tipos={"1.1": "21"},
+        )
+        return leitura
+
+    def test_t06_original(self):
+        leitura = self._leitura("80")
+        assert leitura.status is ReadingStatus.OK
+        assert leitura.nivel_percentual == Decimal("80.0")
+        assert leitura.tipo_suprimento == 21
+
+    def test_t06_paralelo(self):
+        leitura = self._leitura("-2")
+        assert leitura.status is ReadingStatus.NAO_REPORTADO
+        assert leitura.nivel_percentual is None
+        assert leitura.nivel_bruto == -2
+        assert leitura.capacidade_max == 100
+        assert leitura.tipo_suprimento == 21
+
+
 class TestInterpretarLeitura:
     def test_leitura_normal(self):
         leitura = interpretar_leitura(1, "850", "1000")
