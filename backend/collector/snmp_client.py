@@ -23,6 +23,7 @@ crus e quem decide o que eles significam é readings/service.py.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from pysnmp.hlapi.v3arch.asyncio import (
@@ -53,12 +54,18 @@ class ColetaSnmp:
     """
     Resposta crua de uma impressora, antes de qualquer interpretação.
 
-    `respondeu=False` significa que nenhuma das consultas trouxe valor
-    algum - a impressora está fora do ar, fora da VLAN ou com SNMP
-    desabilitado. É o que vira status 'sem_resposta' na leitura.
+    `respondeu=False` significa que não há dado confiável para gravar:
+    ou nenhuma consulta trouxe valor (impressora fora do ar, fora da
+    VLAN ou com SNMP desabilitado), ou uma consulta ESSENCIAL voltou em
+    branco mesmo após nova tentativa. É o que vira 'sem_resposta'.
+
+    `consultas_em_branco` lista as consultas NÃO essenciais que falharam
+    numa impressora que respondeu: o campo correspondente fica None e a
+    coleta segue, mas a falha fica registrada no error_summary.
     """
     respondeu: bool
     erro: str | None = None
+    consultas_em_branco: list[str] = field(default_factory=list)
     numero_serie: str | None = None
     marca: str | None = None
     modelo: str | None = None
@@ -74,6 +81,17 @@ class ColetaSnmp:
 class _ResultadoWalk:
     valores: dict[str, str]
     erro: str | None = None
+
+    @property
+    def em_branco(self) -> bool:
+        """
+        True quando a consulta falhou sem trazer nada.
+
+        Vazio SEM erro é o agente dizendo que não implementa o OID - é
+        ausência legítima. Vazio COM erro (timeout, em geral) é falha de
+        transporte: o dado existe, só não chegou.
+        """
+        return not self.valores and self.erro is not None
 
 
 async def _walk_oid(
@@ -159,11 +177,16 @@ async def _get_oid(
             ContextData(),
             ObjectType(ObjectIdentity(oid)),
         )
-        # Em SNMPv1, OID inexistente chega como errorStatus (noSuchName);
+        # Em SNMPv1, OID inexistente chega como errorStatus noSuchName;
         # os marcadores NoSuch*/EndOfMibView cobrem agentes que respondem
-        # no estilo v2c mesmo assim.
-        if errorIndication or errorStatus:
-            erro = str(errorIndication or errorStatus)
+        # no estilo v2c mesmo assim. Nos dois casos é ausência legítima
+        # (valores vazios, sem erro), não falha: só timeout e afins
+        # contam como consulta que voltou em branco.
+        if errorIndication:
+            erro = str(errorIndication)
+        elif errorStatus:
+            if errorStatus.prettyPrint() != "noSuchName":
+                erro = errorStatus.prettyPrint()
         else:
             for _, value in varBinds:
                 if not isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
@@ -240,6 +263,18 @@ async def walk_diagnostico(
     return resultado.valores
 
 
+# Consultas sem as quais a leitura gravada ficaria errada, e não apenas
+# incompleta. Nível e capacidade formam o percentual: sem um deles, toda
+# linha viraria status 'erro' ou sumiria. Os contadores são o que a troca
+# de toner congela: uma troca detectada numa leitura sem contador perde
+# o rendimento deste cartucho e do próximo - e não há como recuperar,
+# porque a leitura seguinte já compara contra esta. Melhor registrar a
+# impressora como falha e deixar a próxima coleta detectar a troca.
+_CONSULTAS_ESSENCIAIS = frozenset(
+    {"niveis", "capacidades", "paginas_total", "paginas_copias"}
+)
+
+
 async def consultar_impressora(
     ip: str,
     community: str | None = None,
@@ -252,79 +287,104 @@ async def consultar_impressora(
     que já usava asyncio.gather para nível e capacidade) porque são
     independentes entre si - o custo de uma impressora é o da consulta
     mais lenta, não a soma de todas.
+
+    Resposta parcial: se a impressora respondeu a alguma consulta, as
+    que voltaram em branco são repetidas uma vez - ela está no ar, então
+    a falha foi de transporte. Persistindo, consulta essencial em branco
+    derruba a impressora para falha; não essencial vira campo None,
+    listado em `consultas_em_branco`. Não é o retry que a Fase 6 decidiu
+    não fazer: aquele seria para impressora que não respondeu nada.
     """
     community = community or settings.snmp.default_community
     port = port or settings.snmp.port
     timeout = settings.snmp.timeout_seconds
     retries = settings.snmp.retries
 
-    async def walk(base_oid: str) -> _ResultadoWalk:
-        return await _walk_oid(ip, community, base_oid, port, timeout, retries)
+    def walk(base_oid: str) -> Callable[[], Awaitable[_ResultadoWalk]]:
+        return lambda: _walk_oid(ip, community, base_oid, port, timeout, retries)
 
-    async def get(oid: str) -> _ResultadoWalk:
-        return await _get_oid(ip, community, oid, port, timeout, retries)
+    def get(oid: str) -> Callable[[], Awaitable[_ResultadoWalk]]:
+        return lambda: _get_oid(ip, community, oid, port, timeout, retries)
 
-    # Configurado no .env, o total vem por get do OID exato; senão, walk
-    # da tabela prtMarkerLifeCount. Sem recair no padrão quando o OID
-    # configurado não responde: as duas fontes divergem, e misturá-las
-    # entre coletas faria paginas_rendidas somar ou perder a diferença.
-    if settings.snmp.oid_contador_total:
-        consulta_total = get(settings.snmp.oid_contador_total)
-    else:
-        consulta_total = walk(oids.OID_MARKER_LIFE_COUNT)
+    consultas = {
+        "numero_serie": walk(oids.OID_SERIAL_NUMBER),
+        "sys_descr": walk(oids.OID_SYS_DESCR),
+        "nome": walk(oids.OID_PRINTER_NAME),
+        "niveis": walk(oids.OID_SUPPLIES_LEVEL),
+        "capacidades": walk(oids.OID_SUPPLIES_MAX_CAPACITY),
+        "descricoes": walk(oids.OID_SUPPLIES_DESCRIPTION),
+        "tipos": walk(oids.OID_SUPPLIES_TYPE),
+        # Configurado no .env, o total vem por get do OID exato; senão,
+        # walk da tabela prtMarkerLifeCount. Sem recair no padrão quando o
+        # OID configurado não responde: as duas fontes divergem, e
+        # misturá-las entre coletas faria paginas_rendidas somar ou perder
+        # a diferença.
+        "paginas_total": (
+            get(settings.snmp.oid_contador_total)
+            if settings.snmp.oid_contador_total
+            else walk(oids.OID_MARKER_LIFE_COUNT)
+        ),
+    }
+    # O contador de cópias só existe na MIB privada do fabricante e vem
+    # do .env (SNMP_OID_CONTADOR_COPIAS). Sem ele configurado, não é
+    # consultado e `paginas_copias` fica NULL.
+    if settings.snmp.oid_contador_copias:
+        consultas["paginas_copias"] = get(settings.snmp.oid_contador_copias)
 
-    (
-        serial,
-        sys_descr,
-        nome,
-        niveis,
-        capacidades,
-        descricoes,
-        tipos,
-        paginas,
-    ) = await asyncio.gather(
-        walk(oids.OID_SERIAL_NUMBER),
-        walk(oids.OID_SYS_DESCR),
-        walk(oids.OID_PRINTER_NAME),
-        walk(oids.OID_SUPPLIES_LEVEL),
-        walk(oids.OID_SUPPLIES_MAX_CAPACITY),
-        walk(oids.OID_SUPPLIES_DESCRIPTION),
-        walk(oids.OID_SUPPLIES_TYPE),
-        consulta_total,
-    )
+    nomes = list(consultas)
+    respostas = await asyncio.gather(*(consultas[nome]() for nome in nomes))
+    resultados = dict(zip(nomes, respostas))
 
-    resultados = (serial, sys_descr, nome, niveis, capacidades, descricoes, tipos, paginas)
-    respondeu = any(resultado.valores for resultado in resultados)
-
-    if not respondeu:
-        erro = next((r.erro for r in resultados if r.erro), "sem resposta SNMP")
+    if not any(resultado.valores for resultado in resultados.values()):
+        erro = next(
+            (r.erro for r in resultados.values() if r.erro), "sem resposta SNMP"
+        )
         logger.warning("Impressora %s não respondeu: %s", ip, erro)
         return ColetaSnmp(respondeu=False, erro=erro)
 
-    texto_sys_descr = _primeiro_valor(sys_descr)
+    em_branco = [nome for nome in nomes if resultados[nome].em_branco]
+    if em_branco:
+        logger.info(
+            "Impressora %s: repetindo consultas em branco: %s",
+            ip, ", ".join(em_branco),
+        )
+        novas = await asyncio.gather(*(consultas[nome]() for nome in em_branco))
+        resultados.update(zip(em_branco, novas))
+        em_branco = [nome for nome in em_branco if resultados[nome].em_branco]
+
+    essenciais = [nome for nome in em_branco if nome in _CONSULTAS_ESSENCIAIS]
+    if essenciais:
+        erro = (
+            f"resposta parcial, sem {', '.join(essenciais)}: "
+            f"{resultados[essenciais[0]].erro}"
+        )
+        logger.warning("Impressora %s: %s", ip, erro)
+        return ColetaSnmp(respondeu=False, erro=erro)
+
+    if em_branco:
+        logger.warning(
+            "Impressora %s: consultas em branco: %s", ip, ", ".join(em_branco)
+        )
+
+    texto_sys_descr = _primeiro_valor(resultados["sys_descr"])
     # sysDescr é texto livre e pode vir com várias linhas de descrição;
     # a coluna `modelo` é VARCHAR(100), então corta aqui em vez de
     # deixar o INSERT falhar no meio de uma coleta.
-    modelo = (_primeiro_valor(nome) or texto_sys_descr or "").strip()[:100] or None
-
-    # O contador de cópias é consultado à parte porque seu OID é
-    # opcional: só existe na MIB privada do fabricante e vem do .env
-    # (SNMP_OID_CONTADOR_COPIAS). Sem ele configurado, a coleta segue
-    # normalmente e `paginas_copias` fica NULL.
-    paginas_copias = None
-    if settings.snmp.oid_contador_copias:
-        resultado_copias = await get(settings.snmp.oid_contador_copias)
-        paginas_copias = _primeiro_inteiro(resultado_copias)
+    modelo = (
+        _primeiro_valor(resultados["nome"]) or texto_sys_descr or ""
+    ).strip()[:100] or None
+    copias = resultados.get("paginas_copias")
 
     return ColetaSnmp(
         respondeu=True,
-        numero_serie=_primeiro_valor(serial),
+        consultas_em_branco=em_branco,
+        numero_serie=_primeiro_valor(resultados["numero_serie"]),
         marca=deduzir_marca(texto_sys_descr),
         modelo=modelo,
-        niveis=niveis.valores,
-        capacidades=capacidades.valores,
-        descricoes=descricoes.valores,
-        tipos=tipos.valores,
-        paginas_total=_primeiro_inteiro(paginas),
-        paginas_copias=paginas_copias,
+        niveis=resultados["niveis"].valores,
+        capacidades=resultados["capacidades"].valores,
+        descricoes=resultados["descricoes"].valores,
+        tipos=resultados["tipos"].valores,
+        paginas_total=_primeiro_inteiro(resultados["paginas_total"]),
+        paginas_copias=_primeiro_inteiro(copias) if copias else None,
     )

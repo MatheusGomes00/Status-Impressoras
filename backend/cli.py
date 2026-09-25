@@ -94,6 +94,8 @@ async def _dry_run(ips: list[str] | None) -> None:
         print(f"  marca:    {resposta.marca}")
         print(f"  modelo:   {resposta.modelo}")
         print(f"  páginas:  total={resposta.paginas_total} copias={resposta.paginas_copias}")
+        if resposta.consultas_em_branco:
+            print(f"  EM BRANCO: {', '.join(resposta.consultas_em_branco)}")
 
         leituras = readings_service.montar_leituras_snmp(
             niveis=resposta.niveis,

@@ -188,6 +188,22 @@ class TestContagemDeSucesso:
         leituras_gravadas = d.salvar.call_args.args[2]
         assert leituras_gravadas[0].status is ReadingStatus.SEM_RESPOSTA
 
+    async def test_resposta_parcial_conta_como_sucesso_e_fica_no_resumo(self):
+        # Gravou o que era essencial, então é sucesso; mas o campo em
+        # branco não pode virar um NULL sem explicação.
+        impressoras = [criar_impressora(1, "10.0.0.1")]
+        resposta = criar_resposta_snmp()
+        resposta.consultas_em_branco = ["sys_descr"]
+
+        with ColetorDublado(impressoras, resposta) as dublê:
+            await executar_coleta(TriggerType.MANUAL)
+
+        assert dublê.contagem_final["impressoras_sucesso"] == 1
+        assert dublê.contagem_final["impressora_falha"] == 0
+        assert "10.0.0.1: resposta parcial, em branco: sys_descr" in (
+            dublê.contagem_final["error_summary"]
+        )
+
     async def test_uma_impressora_com_erro_nao_derruba_as_outras(self):
         impressoras = [
             criar_impressora(1, "10.0.0.1"),

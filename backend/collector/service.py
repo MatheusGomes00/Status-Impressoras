@@ -15,7 +15,8 @@ Fluxo de uma execução
      detecta troca de cartucho
   4. fecha o registro com COMPLETED / PARTIAL / FAILED
 
-O que conta como sucesso: a impressora ter RESPONDIDO ao SNMP. Uma
+O que conta como sucesso: a impressora ter RESPONDIDO ao SNMP, com as
+consultas essenciais (ver _CONSULTAS_ESSENCIAIS em snmp_client.py). Uma
 leitura com status 'erro' ou 'nao_reportado' não derruba a impressora
 para falha - ela respondeu, o consumível é que não informou nível.
 Misturar as duas coisas faria a taxa de falha da coleta medir qualidade
@@ -97,6 +98,15 @@ async def _coletar_impressora(
         )
 
         await _detectar_trocas(impressora, leituras, ids, anteriores)
+
+        # Respondeu e foi gravada, então conta como sucesso; mas o que
+        # veio em branco fica visível no error_summary em vez de virar
+        # um NULL que ninguém sabe explicar depois.
+        if resposta.consultas_em_branco:
+            return True, (
+                f"{impressora.ip_address}: resposta parcial, em branco: "
+                f"{', '.join(resposta.consultas_em_branco)}"
+            )
         return True, None
 
     except Exception as excecao:
