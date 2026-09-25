@@ -91,7 +91,8 @@ CREATE TABLE coleta_executada (
 -- Por que ha mais de uma linha por impressora mesmo sendo
 -- mono: a tabela prtMarkerSupplies expoe tambem a caixa de
 -- residuo e, em alguns modelos, o tambor. tipo_suprimento
--- distingue (3=toner, 4=caixa de residuo, conforme RFC 3805)
+-- distingue (3=toner, 21=cartucho de toner, 4=caixa de residuo,
+-- conforme RFC 3805)
 -- e e o que impede o relatorio de somar residuo como se fosse
 -- toner.
 --

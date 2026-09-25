@@ -42,6 +42,11 @@ class SupplyType(int, Enum):
     TONER = 3
     WASTE_TONER = 4
     OPC = 9
+    TONER_CARTRIDGE = 21
+    """
+    tonerCartridge. É o que a Canon iR1643i II reporta para o T06 - o
+    parque inteiro na Fase 4B.4, nenhuma linha com TONER (3).
+    """
 
 
 def eh_tipo_toner(tipo_suprimento: int | None) -> bool:
@@ -54,7 +59,7 @@ def eh_tipo_toner(tipo_suprimento: int | None) -> bool:
     """
     if tipo_suprimento is None:
         return True
-    return tipo_suprimento == SupplyType.TONER
+    return tipo_suprimento in (SupplyType.TONER, SupplyType.TONER_CARTRIDGE)
 
 
 @dataclass

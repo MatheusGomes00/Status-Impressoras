@@ -32,7 +32,7 @@ observado no MVP - ver teste_snmp.py).
 # casar nível, capacidade, descrição e tipo do mesmo suprimento sem
 # depender da ordem em que o agente devolve as linhas.
 OID_SUPPLIES_TYPE = "1.3.6.1.2.1.43.11.1.1.5"
-"""prtMarkerSuppliesType - 3=toner, 4=caixa de resíduo, 9=cilindro."""
+"""prtMarkerSuppliesType - 3=toner, 4=caixa de resíduo, 9=cilindro, 21=cartucho de toner (o que o parque reporta)."""
 
 OID_SUPPLIES_DESCRIPTION = "1.3.6.1.2.1.43.11.1.1.6"
 """prtMarkerSuppliesDescription - texto do suprimento ("Black Toner", etc.)."""

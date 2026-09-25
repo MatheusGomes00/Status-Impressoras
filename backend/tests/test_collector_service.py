@@ -261,6 +261,18 @@ class TestDeteccaoDeTroca:
 
         d.registrar_troca.assert_not_awaited()
 
+    async def test_toner_cartridge_do_parque_dispara_a_deteccao(self):
+        # A Canon iR1643i II reporta o T06 como tonerCartridge (21), não
+        # toner (3). Aceitando só o 3, nenhuma troca do parque era
+        # detectada - foi o que a Fase 4B.4 encontrou.
+        impressoras = [criar_impressora(1, "10.0.0.1")]
+        anteriores = {1: criar_leitura_anterior(Decimal("5"))}
+
+        with ColetorDublado(impressoras, criar_resposta_snmp(tipo="21"), anteriores) as d:
+            await executar_coleta(TriggerType.MANUAL)
+
+        d.registrar_troca.assert_awaited_once()
+
     async def test_leitura_sem_nivel_nao_gera_troca(self):
         # Um paralelo que volta a reportar nível criaria uma troca
         # fantasma se leituras sem medição entrassem na comparação.
