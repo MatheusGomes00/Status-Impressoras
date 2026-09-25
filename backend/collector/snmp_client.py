@@ -125,6 +125,10 @@ async def _walk_oid(
             transport,
             ContextData(),
             ObjectType(ObjectIdentity(base_oid)),
+            # O padrão (True) segue o walk até o fim da MIB do agente, não
+            # até o fim da tabela: na Canon eram ~1000 linhas por walk para
+            # aproveitar uma, e a coleta das 66 levava quase 10 minutos.
+            lexicographicMode=False,
         )
 
         async for errorIndication, errorStatus, errorIndex, varBinds in walker:
@@ -133,7 +137,8 @@ async def _walk_oid(
                 break
             for oid_obj, value in varBinds:
                 oid_str = str(oid_obj)
-                if not oid_str.startswith(base_oid):
+                # Com o ponto: sem ele, a base "...4.1" casaria "...4.101".
+                if not oid_str.startswith(base_oid + "."):
                     continue
                 sufixo = oid_str[len(base_oid):].lstrip(".")
                 valores[sufixo] = value.prettyPrint()
