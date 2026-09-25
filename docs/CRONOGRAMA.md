@@ -44,7 +44,7 @@ Detalhado em [COLETA_SNMP.md](COLETA_SNMP.md).
 troca de cartucho integrada ao fluxo de coleta.
 
 ### Fase 5 — Testes automatizados sem o parque
-58 testes em `backend/tests/`, cobrindo interpretação das leituras,
+72 testes em `backend/tests/`, cobrindo interpretação das leituras,
 detecção de troca, decisão de status da coleta, dedução de marca e a
 orquestração completa do coletor.
 
@@ -216,6 +216,23 @@ do painel.
 Se nenhum OID bater, o relatório trabalha só com o total — que já
 responde a pergunta principal. A separação impressão/cópia é refinamento.
 
+**Resultado (10.165.22.54, Canon iR1643i II):**
+
+| Contador | OID | SNMP | Painel |
+|---|---|---|---|
+| `prtMarkerLifeCount` | `1.3.6.1.2.1.43.10.2.1.4.1.1` | 2913 | não bate |
+| Canon 101 (total) | `1.3.6.1.4.1.1602.1.11.1.3.1.4.101` | 2926 | bate |
+| Canon 201 (cópias) | `1.3.6.1.4.1.1602.1.11.1.3.1.4.201` | 42 | bate |
+
+O `prtMarkerLifeCount` fica 13 páginas abaixo do total do painel, lido no
+mesmo instante. Decisão: o total passa a vir do contador Canon 101, pela
+nova variável `SNMP_OID_CONTADOR_TOTAL`; as cópias, do Canon 201.
+
+A validação expôs um bug: os OIDs do `.env` eram consultados por walk, que
+a partir de um OID completo nunca devolve o próprio valor — o contador de
+cópias sairia sempre `NULL`. Passaram a ser lidos por get, com teste de
+regressão em `tests/test_snmp_client.py`.
+
 ### 4B.4 — Levantar a cara real do parque
 
 Com uma coleta completa gravada, verificar:
@@ -228,6 +245,126 @@ Com uma coleta completa gravada, verificar:
   com `status='erro'`), o que indicaria MIB inconsistente naquele modelo.
 - A taxa de `sem_resposta` por impressora — é o dado que decide se vale
   implementar retry na Fase 6.
+
+**Resultado da primeira coleta completa (coleta #1, 2026-09-25, 66 impressoras):**
+
+- **Suprimentos:** todas as 63 que responderam expõem **um único**
+  suprimento, `Canon Toner T06 Black`, com `tipo_suprimento=21`
+  (tonerCartridge) — nenhuma com 3, nem caixa de resíduo ou tambor.
+  **Bug encontrado:** `eh_tipo_toner` só aceitava o 3, então a detecção de
+  troca não rodaria para nenhuma impressora do parque. Passou a aceitar o
+  21, com teste em `test_collector_service.py`.
+- **Marca/modelo:** 62 Canon iR1643i II deduzidas corretamente. Uma
+  (10.165.20.82) ficou com modelo e sem marca: o `sysDescr` não chegou
+  naquela coleta, embora responda `Canon iR1643i II /P` fora dela. A
+  heurística está certa; foi uma consulta que falhou isolada — ver
+  "Pontos em aberto" abaixo.
+- **MIB inconsistente:** nenhuma linha com `status='erro'`.
+- **Toner paralelo:** 5 impressoras com `nao_reportado`, todas com o mesmo
+  padrão da 4B.2 (`-2/100`).
+- **Contadores:** todas as 63 com `paginas_total` e `paginas_copias`
+  preenchidos.
+- **`sem_resposta`:** 3 de 66 (4,5%) — 10.165.23.175, 10.165.21.45 e
+  10.165.22.47. **Confirmado no local: estavam desligadas.** Não
+  respondiam nem a ping, então retry não teria recuperado nenhuma. Uma
+  coleta só não basta para a decisão da Fase 6, mas até aqui não há falha
+  transitória no nível da impressora inteira.
+
+### 4B.5 — Resposta parcial: tratada
+
+Na 10.165.20.82 uma consulta (`sysDescr`) voltou em branco e as outras
+não; a impressora contou como sucesso e o campo ficou `NULL` sem registro
+do motivo. O mesmo podia acontecer com nível ou contadores.
+
+Tratamento em `collector/snmp_client.py`:
+
+- **Em branco** é consulta vazia **com erro** (timeout). Vazia sem erro é
+  o agente dizendo que não implementa o OID, e continua valendo como
+  ausência legítima — inclusive `noSuchName` no get dos contadores.
+- Se a impressora respondeu a alguma consulta, as que voltaram em branco
+  são **repetidas uma vez**. Não contraria a decisão da Fase 6: aquela é
+  sobre impressora que não respondeu nada; aqui ela está comprovadamente
+  no ar.
+- Persistindo em branco uma consulta **essencial** — nível, capacidade,
+  contador total ou de cópias —, a impressora vira **falha**
+  (`sem_resposta`, com `resposta parcial, sem ...` no `error_summary`) em
+  vez de gravar leitura errada. Contador entra na lista porque uma troca
+  detectada numa leitura sem contador perde o rendimento deste cartucho e
+  do próximo, sem volta; como falha, a próxima coleta detecta a troca
+  com os contadores.
+- Consulta **não essencial** em branco (série, `sysDescr`, nome,
+  descrição, tipo) segue como `NULL`, mas a impressora aparece no
+  `error_summary` como `resposta parcial, em branco: ...` sem contar como
+  falha. O `--dry-run` mostra a linha `EM BRANCO`.
+
+---
+
+## Tempo de coleta: resolvido
+
+A coleta #1 levou **9min50s** para 66 impressoras (15 em paralelo). Uma
+impressora sozinha leva de 10 a 22 s.
+
+### Diagnóstico (feito)
+
+O `walk_cmd` da pysnmp usa `lexicographicMode=True` por padrão: o walk
+**não para ao sair da tabela**, segue até o fim da MIB do agente. O
+`_walk_oid` descarta as linhas de fora com `continue`, mas já pagou por
+elas. Medido na 10.165.22.54:
+
+| Tabela | `lexicographicMode=True` | `lexicographicMode=False` |
+|---|---|---|
+| `sysDescr` | 1246 linhas, 2,25 s | 1 linha, 0,02 s |
+| `prtMarkerSuppliesLevel` | 897 linhas, 1,69 s | 1 linha, 0,02 s |
+| `prtMarkerLifeCount` | 916 linhas, 1,71 s | 1 linha, 0,02 s |
+
+Em todos os casos só **uma** linha era da tabela. São ~8 walks por
+impressora, ~8 mil requisições SNMP para aproveitar 8 — e, com 15
+impressoras ao mesmo tempo, é também a causa provável das respostas
+parciais: quanto mais pacotes, mais timeouts.
+
+### Passos (executados)
+
+1. **Linha de base.** Guardar a saída do `--dry-run` de um conjunto de
+   referência — a .54 (original), a .45 (paralelo) e a .20.82 (a da
+   resposta parcial) — para comparar depois.
+2. **Correção.** Passar `lexicographicMode=False` no `walk_cmd` de
+   `_walk_oid`. Aproveitar para exigir o ponto no filtro de prefixo
+   (`base_oid + "."`): hoje a base `...4.1` também casaria com `...4.101`.
+3. **Resultado idêntico.** Repetir o `--dry-run` do conjunto de
+   referência e comparar: mesmos suprimentos, níveis, tipos e contadores.
+   Qualquer diferença bloqueia o passo seguinte.
+4. **Coleta completa medida.** Rodar a coleta das 66 e registrar: duração
+   total, e quantas impressoras tiveram `resposta parcial` no
+   `error_summary`. Meta: abaixo de 1 minuto e nenhuma resposta parcial.
+5. **Só se a meta não for atingida:** medir a duração por impressora (log
+   em `_coletar_impressora`) e avaliar, nesta ordem, subir
+   `COLLECTOR_MAX_CONCURRENT_REQUESTS`, reaproveitar um `SnmpEngine` por
+   impressora em vez de um por consulta, e ajustar `SNMP_TIMEOUT_SECONDS`.
+6. **Registrar aqui** os números antes/depois.
+
+### Resultado
+
+| Coleta | Mudança | Duração | Respostas parciais |
+|---|---|---|---|
+| #1 | — | 9min50s | 1 (10.165.20.82) |
+| #2 | `lexicographicMode=False` | 1min16s | 0 |
+| #3 | + um `SnmpEngine` por impressora | **15 s** | 0 |
+
+O passo 3 deu saída **idêntica** nas três impressoras de referência depois
+de cada mudança, e as três coletas gravaram os mesmos números (58 `ok`,
+5 `nao_reportado`, 3 `sem_resposta`, nenhum contador nulo, nenhuma troca
+falsa).
+
+A coleta #2 não bateu a meta, então o passo 5 rodou. Medida por
+impressora, uma consulta isolada levava 1,1 s, mas em paralelo a
+primeira leva de 15 terminava junta depois de 67 s: o event loop estava
+travado. A causa era o `SnmpEngine`: criar um custa ~0,09 s de CPU
+**síncrona**, e com um por consulta eram ~600 na coleta. Passou a ser um
+por impressora, compartilhado pelas consultas dela. Não foi preciso mexer
+em paralelismo nem em timeout.
+
+Dos 15 s restantes, a maior parte são as 3 impressoras desligadas
+esperando o timeout (`SNMP_TIMEOUT_SECONDS=3` × 2 tentativas).
 
 ---
 

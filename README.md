@@ -146,7 +146,7 @@ Duas coisas que costumam confundir:
   momento da importação, então sem ele a suíte nem chega a rodar. Os
   valores do `.env.example` servem como estão; não precisam ser reais.
 
-O mapa dos 58 testes, o que cada um protege e o que ficou **fora** da
+O mapa dos 72 testes, o que cada um protege e o que ficou **fora** da
 cobertura estão em [docs/TESTES.md](docs/TESTES.md).
 
 ---
@@ -167,14 +167,12 @@ O procedimento completo está na **Fase 4B** do
    impressoras realmente produzem. Comparar uma impressora com paralelo
    e outra com original resolve.
 
-3. **Contador de cópias.** A Printer-MIB padrão só expõe o total de
-   páginas; cópias separadas só existem na MIB privada da Canon. Rode
-   `descobrir_oids_canon.py`, compare com o painel e grave o OID em
-   `SNMP_OID_CONTADOR_COPIAS` no `.env`. Até lá, `paginas_copias` fica
-   nulo e o relatório trabalha só com o total.
+3. **Contador de cópias.** Resolvido na iR1643i II: contador Canon 201,
+   em `SNMP_OID_CONTADOR_COPIAS`.
 
-4. **Contador de total.** Confirmar que `prtMarkerLifeCount` bate com o
-   total exibido no painel.
+4. **Contador de total.** Resolvido: `prtMarkerLifeCount` não bate com o
+   painel na Canon; o total vem do contador Canon 101, em
+   `SNMP_OID_CONTADOR_TOTAL`.
 
 ---
 

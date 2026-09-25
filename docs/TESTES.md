@@ -1,6 +1,6 @@
 # Testes automatizados
 
-58 testes, em 5 arquivos, rodando em menos de um segundo. Nenhum deles
+72 testes, em 5 arquivos, rodando em menos de um segundo. Nenhum deles
 precisa do parque de impressoras, de rede ou de banco de dados.
 
 Este documento explica o que está coberto, por que a suíte foi montada
@@ -21,13 +21,13 @@ pytest
 Saída esperada:
 
 ```
-tests\test_collection_runs_service.py .....                     [  8%]
-tests\test_collector_service.py ............                    [ 29%]
-tests\test_readings_service.py ........................         [ 70%]
-tests\test_snmp_client.py ......                                [ 81%]
+tests\test_collection_runs_service.py .....                     [  6%]
+tests\test_collector_service.py ..............                  [ 26%]
+tests\test_readings_service.py ..........................       [ 62%]
+tests\test_snmp_client.py ................                      [ 84%]
 tests\test_toner_changes_service.py ...........                 [100%]
 
-============================= 58 passed in 0.49s ==============================
+============================= 72 passed in 0.29s ==============================
 ```
 
 ### Duas coisas que confundem na primeira vez
@@ -116,7 +116,7 @@ Existe para evitar seis `with patch(...)` aninhados em cada teste.
 
 ## Mapa dos testes
 
-### `test_readings_service.py` — 24 testes
+### `test_readings_service.py` — 26 testes
 
 O arquivo mais importante: cobre a interpretação dos valores crus do
 SNMP, que é onde mora a maior parte da regra do projeto.
@@ -126,6 +126,7 @@ SNMP, que é onde mora a maior parte da regra do projeto.
 | `TestCalcularPercentual` | o cálculo e o arredondamento para uma casa; nível negativo e capacidade zero devolvem `None`, não erro |
 | `TestIndiceDoSufixo` | o índice gravado vem do `supplyIndex` do OID, não da posição na resposta — é o que mantém a continuidade do histórico se uma linha deixar de ser reportada |
 | `TestTonerParalelo` | as três formas de "não reportou nível" viram `nao_reportado` |
+| `TestParqueObservado` | os valores reais colhidos na Fase 4B.2: T06 original (80/100) sai `ok`, T06 paralelo (-2/100) sai `nao_reportado` |
 | `TestInterpretarLeitura` | leitura normal, valor corrompido (`erro`) e índice sem capacidade correspondente |
 | `TestMontarLeiturasSnmp` | o casamento das tabelas da `prtMarkerSupplies` pela chave da linha |
 | `TestSemResposta` | a leitura registrada quando a impressora inteira não responde |
@@ -141,13 +142,13 @@ O que está em jogo aqui: um falso positivo inventa um cartucho que
 ninguém trocou; um falso negativo some com o rendimento de um cartucho
 real.
 
-### `test_collector_service.py` — 12 testes
+### `test_collector_service.py` — 14 testes
 
 Integração da orquestração, com rede e banco dublados.
 
 | Classe | Protege |
 |---|---|
-| `TestContagemDeSucesso` | o que conta como sucesso, o que conta como falha, e que uma impressora com erro não derruba as outras |
+| `TestContagemDeSucesso` | o que conta como sucesso, o que conta como falha, que resposta parcial conta como sucesso mas aparece no `error_summary`, e que uma impressora com erro não derruba as outras |
 | `TestFiltroDeIps` | `--ip` restringe a rodada de verdade |
 | `TestDeteccaoDeTroca` | quando a detecção é acionada e, principalmente, quando **não** é |
 | `TestIdentificacaoDaImpressora` | marca e modelo descobertos por SNMP são gravados |
@@ -159,12 +160,24 @@ Integração da orquestração, com rede e banco dublados.
 impressoras não responderam — o dia a dia normal) de `FAILED` (nenhuma
 respondeu, o que sugere problema de rede e merece investigação).
 
-### `test_snmp_client.py` — 6 testes
+### `test_snmp_client.py` — 16 testes
 
 `TestDeduzirMarca` fixa o comportamento da heurística que extrai a marca
 do `sysDescr`, que é texto livre e varia por fabricante: marca no início,
 no meio, em maiúsculas, `Hewlett-Packard` normalizado para `HP`, e o
 fallback para o primeiro token quando o fabricante não está mapeado.
+
+`TestContadoresDePagina` fixa como cada contador de página é consultado,
+com a rede dublada: OIDs do `.env` por get, `prtMarkerLifeCount` por walk
+só quando `SNMP_OID_CONTADOR_TOTAL` está vazio, e sem recair nele quando
+está configurado.
+
+`TestRespostaParcial` cobre a impressora que responde a parte das
+consultas: o que voltou em branco é repetido uma vez (e só isso);
+consulta essencial em branco (nível, capacidade, contadores) derruba a
+impressora para falha; não essencial vira `None` listado em
+`consultas_em_branco`; OID não implementado (vazio sem erro) não conta
+como falha.
 
 ---
 
@@ -179,6 +192,9 @@ documenta um defeito real que já aconteceu.
 | `test_casa_pelo_indice_do_oid` e `test_ordem_de_chegada_nao_importa` | o pareamento por posição dividia o nível do toner pela capacidade da caixa de resíduo, produzindo um percentual plausível e errado |
 | `test_codigo_especial_da_rfc_3805` e `test_capacidade_desconhecida` | os códigos `-1/-2/-3` eram classificados como `ok` sem percentual, deixando o cartucho paralelo indistinguível de um suprimento não medível |
 | `test_leitura_sem_nivel_nao_gera_troca` | um paralelo que voltasse a reportar nível criava uma troca fantasma |
+| `test_oids_configurados_sao_lidos_por_get` | os contadores do `.env` eram lidos por walk, que a partir de um OID completo nunca devolve o próprio valor — `paginas_copias` saía sempre `NULL` (Fase 4B.3) |
+| `test_toner_cartridge_do_parque_dispara_a_deteccao` | só o tipo 3 contava como toner, mas o parque inteiro reporta 21 (tonerCartridge) — nenhuma troca seria detectada (Fase 4B.4) |
+| `test_nivel_em_branco_derruba_para_falha` e `test_nao_essencial_em_branco_segue_e_fica_registrada` | na coleta #1, uma consulta em branco virou `NULL` gravado como sucesso, sem registro do motivo (Fase 4B.5) |
 | `test_caixa_de_residuo_nao_gera_troca` | a caixa de resíduo enche em vez de esvaziar, então todo esvaziamento parecia troca de toner |
 
 ---

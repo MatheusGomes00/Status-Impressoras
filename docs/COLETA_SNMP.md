@@ -143,12 +143,26 @@ suprimento da mesma coleta. É denormalização deliberada: evita um JOIN em
 todo relatório de consumo, e como o coletor grava o mesmo valor nas três
 linhas de uma vez, não há risco de divergirem.
 
-### Total: resolvido
+### Total: contador Canon, configurável
 
-`prtMarkerLifeCount` (`1.3.6.1.2.1.43.10.2.1.4`) é padrão e universal.
-Fica fixo em `oids.py` — não há o que ajustar por parque.
+`prtMarkerLifeCount` (`1.3.6.1.2.1.43.10.2.1.4`) é o total padrão da
+Printer-MIB, mas **na Canon do parque ele não bate com o painel**. Na
+Fase 4B.3, lidos no mesmo instante na iR1643i II 10.165.22.54, ele deu
+2913 e o contador Canon 101 deu 2926, que é o valor do painel.
 
-### Cópias: pendente de descoberta
+Por isso o total também é configurável, em `SNMP_OID_CONTADOR_TOTAL`.
+Vazio, a coleta usa `prtMarkerLifeCount`. No parque, fica apontando para o
+contador Canon 101:
+
+```
+SNMP_OID_CONTADOR_TOTAL=1.3.6.1.4.1.1602.1.11.1.3.1.4.101
+```
+
+Se o OID configurado não responder, `paginas_total` fica `NULL`: a coleta
+**não** recai no `prtMarkerLifeCount`. As duas fontes divergem, e misturá-las
+entre coletas faria `paginas_rendidas` somar ou perder a diferença.
+
+### Cópias: contador Canon 201
 
 **A Printer-MIB não separa cópia de impressão.** Só existe o total. O
 contador de cópias existe apenas na MIB privada do fabricante — na Canon,
@@ -158,6 +172,17 @@ Por isso ele **não** é uma constante do código: mora na variável de
 ambiente `SNMP_OID_CONTADOR_COPIAS`, lida por `config.py`. Assim o valor
 descoberto em campo é preenchido no `.env` do servidor, sem alterar
 código nem refazer deploy.
+
+No parque (Canon iR1643i II), o OID confirmado contra o painel na Fase
+4B.3 é o contador Canon 201:
+
+```
+SNMP_OID_CONTADOR_COPIAS=1.3.6.1.4.1.1602.1.11.1.3.1.4.201
+```
+
+Os dois OIDs do `.env` são lidos por **get**, não por walk: são OIDs
+completos, com o índice da linha, e um walk a partir deles devolve o que
+vem depois, nunca o próprio valor.
 
 Enquanto estiver vazio, a coleta roda normalmente e `paginas_copias` fica
 `NULL`. **Chutar um OID privado seria pior que não ter o dado**: a
@@ -186,8 +211,12 @@ Procure na saída o OID cujo valor bate com o de cópias e grave no `.env`
 do servidor:
 
 ```
-SNMP_OID_CONTADOR_COPIAS=1.3.6.1.4.1.1602.1.11.1.3.1.4.1
+SNMP_OID_CONTADOR_COPIAS=1.3.6.1.4.1.1602.1.11.1.3.1.4.201
 ```
+
+Na Canon, os contadores ficam em `1.3.6.1.4.1.1602.1.11.1.3.1.4.<código>`
+(e repetidos em `...1.11.1.4.1.4.<código>`), onde o código é o mesmo do
+painel: 101 = total, 201 = cópias, 301 = impressões.
 
 O OID precisa ser **completo, com o índice da linha**. A partir daí a
 coleta passa a preencher `paginas_copias` sozinha.
