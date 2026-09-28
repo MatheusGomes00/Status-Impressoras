@@ -11,8 +11,10 @@ do equipamento.
 
 Chutar um OID privado é pior que não ter o dado: a impressora responde
 um número plausível de outra coisa e o relatório passa a mentir em
-silêncio. Por isso SNMP_OID_CONTADOR_COPIAS nasce vazio no .env e só é
-preenchido depois de confirmado contra uma impressora real.
+silêncio. Por isso o OID só vai para o .env depois de confirmado contra
+o painel de uma impressora real. Para a Canon iR1643i II do parque isso
+já foi feito (Fase 4B.3): total = Canon 101, cópias = Canon 201, ambos
+no .env.example. Este script continua servindo para um modelo novo.
 
 Como usar
 ---------
@@ -20,7 +22,7 @@ Como usar
 
 Rode com a impressora à mão. Anote no painel os contadores de TOTAL e
 de CÓPIAS e compare com a saída: o OID cujo valor bater com o painel é
-o que deve ser preenchido em OID_CANON_CONTADOR_COPIAS.
+o que deve ser preenchido em SNMP_OID_CONTADOR_COPIAS.
 
 Para varrer só um ramo específico:
     python descobrir_oids_canon.py --ip 10.165.20.133 --oid 1.3.6.1.4.1.1602.1.11.1.3
