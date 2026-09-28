@@ -2,7 +2,7 @@
 
 Documento vivo. Atualizar o estado de cada fase conforme o trabalho avança.
 
-**Última atualização:** 2026-09-22
+**Última atualização:** 2026-09-28
 
 | Fase | Entrega | Estado |
 |------|---------|--------|
@@ -10,15 +10,70 @@ Documento vivo. Atualizar o estado de cada fase conforme o trabalho avança.
 | 2 | Schema e domínios em camadas | Concluída |
 | 3 | Interpretação das leituras SNMP | Concluída |
 | 4 | Coletor SNMP + CLI | Concluída |
-| **4B** | **Validação em hardware (inclui toner paralelo)** | **Bloqueada — precisa do parque** |
-| 5 | Testes automatizados sem o parque | Concluída |
-| **5B** | **Teste de integração com o parque** | **Bloqueada — precisa do parque** |
-| 6 | Agendador | Código concluído — falta decidir o processo no SO |
+| 4B | Validação em hardware (inclui toner paralelo) | **Concluída** em 2026-09-25 |
+| 5 | Testes automatizados sem o parque | Concluída — 72 testes |
+| **5B** | **Teste de integração com o parque** | **Em andamento — 2 de 5 itens** |
+| **6** | **Agendador** | **Código concluído — falta decidir o processo no SO** |
 | 7 | API HTTP | Não iniciada |
 | 8 | Relatórios e apresentação | Não iniciada — stack indefinida |
 
 As fases 4B e 5B são as únicas que dependem de acesso às impressoras.
-Tudo o mais pode ser desenvolvido e testado na máquina de desenvolvimento.
+
+---
+
+## Onde paramos
+
+A validação em hardware (4B) terminou com o coletor funcionando contra o
+parque real: três coletas completas gravadas (#1 a #3, em 2026-09-25),
+63 de 66 impressoras respondendo — as 3 restantes estavam desligadas — e
+a coleta levando **15 s**. No caminho, a validação encontrou e corrigiu
+cinco defeitos que os testes sem o parque não tinham como ver:
+
+| Defeito | Efeito se tivesse ido para produção | Etapa |
+|---|---|---|
+| OIDs do `.env` lidos por walk | contador de cópias sempre `NULL` | 4B.3 |
+| `prtMarkerLifeCount` como total | total 13 páginas abaixo do painel | 4B.3 |
+| Só o tipo 3 contava como toner | **nenhuma troca de cartucho detectada** no parque | 4B.4 |
+| Consulta em branco gravada como sucesso | campos `NULL` sem registro do motivo | 4B.5 |
+| Walk até o fim da MIB + um engine por consulta | coleta de 9min50s | Tempo de coleta |
+
+Os OIDs Canon confirmados (total 101, cópias 201) já estão no
+`.env.example`, então um `.env` copiado dele sai pronto para o parque.
+
+## O que falta
+
+Em ordem de prioridade. Os itens 1 e 2 são o que separa o projeto de
+estar coletando sozinho em produção.
+
+1. **Decidir como o agendador roda no servidor** (Fase 6). Recomendação
+   registrada: Opção A, Agendador de Tarefas do Windows chamando
+   `cli.py --agendada`. **Decisão do responsável pelo projeto.**
+2. **Instalar no servidor.** Ambiente virtual, `requirements.txt`, `.env`
+   a partir do `.env.example` (ajustando só o banco), scripts SQL, e as
+   tarefas ou o serviço conforme a decisão do item 1. O passo a passo de
+   instalação ainda não está escrito — ver "Fora de fase".
+3. **Fechar a Fase 5B.** Faltam três itens, detalhados na seção da fase:
+   - coleta sobreposta na prática e recuperação de coleta travada — dá
+     para fazer já, não dependem de nada;
+   - **ciclo de troca real** — depende de alguém trocar um cartucho.
+     É a validação final do objetivo do projeto, e só passou a ser
+     possível depois da correção do tipo 21 na 4B.4.
+4. **Medir a taxa de `sem_resposta` por alguns dias** de coletas
+   agendadas. É o dado que decide se vale implementar retry (Fase 6);
+   uma coleta só não basta.
+5. **Fase 7 — API HTTP.** Pode começar a qualquer momento; não depende
+   dos itens acima.
+6. **Fase 8 — decidir a stack de relatórios.** Maior indefinição do
+   projeto. Os relatórios só ficam úteis com algumas semanas de histórico,
+   o que é mais um motivo para os itens 1 e 2 virem antes.
+
+Pendências menores, sem prazo:
+
+- Conferir os contadores 101 e 201 no painel de uma segunda impressora.
+  A 4B.3 confirmou só na 10.165.22.54; as outras 62 devolveram valores
+  plausíveis, mas não foram conferidas no painel.
+- Testes para os parsers de `config.py` (`_get_env_oid`,
+  `_get_env_horarios`) — listados como lacuna em [TESTES.md](TESTES.md).
 
 ---
 
@@ -68,15 +123,16 @@ não são defeito do código.
 Por isso a consulta SNMP e os repositories são substituídos por dublês
 (`unittest.mock`), e os cenários difíceis viram testes determinísticos:
 impressora que não responde, cartucho paralelo, troca de toner, caixa de
-resíduo esvaziando, coleta sobreposta. Rodam em qualquer máquina,
-inclusive nesta, que não alcança o parque.
+resíduo esvaziando, coleta sobreposta, resposta parcial. Rodam em
+qualquer máquina, inclusive fora da rede do hospital.
 
 Os dublês usam `unittest.mock` da biblioteca padrão, e não o fixture
 `monkeypatch`, para que os testes continuem executáveis fora do pytest
 quando necessário.
 
 Isso **não substitui** a validação em hardware — ela é necessária e está
-nas fases 4B e 5B abaixo.
+nas fases 4B e 5B abaixo. A 4B provou o ponto: encontrou cinco defeitos
+com os 58 testes da época passando.
 
 ### Fase 6 — Agendador
 `scheduler.py` dispara a coleta às **09:00, 13:00 e 17:00, todos os dias
@@ -86,7 +142,10 @@ que o `cli.py`, então coleta manual e agendada não podem divergir.
 **Sem lógica de retry**, por decisão: primeiro medir a taxa de
 `sem_resposta` em produção, depois decidir se a complexidade se paga. Uma
 impressora desligada à noite vai falhar de qualquer jeito; retry só
-resolveria falha transitória de rede.
+resolveria falha transitória de rede. Até aqui (coletas #1 a #3) as
+falhas foram só de impressoras desligadas. A repetição de consulta que
+entrou na 4B.5 é outra coisa: vale só para impressora que respondeu a
+parte das consultas.
 
 Falta apenas decidir como o processo roda no servidor — ver
 "Fase 6 — decisão pendente" mais abaixo.
@@ -138,10 +197,11 @@ acumula disparos vencidos).
 
 ---
 
-## Fase 4B — Validação em hardware
+## Fase 4B — Validação em hardware — concluída
 
-**Bloqueada até haver acesso ao parque.** Nada aqui pode ser antecipado
-da máquina de desenvolvimento, que não alcança a rede das impressoras.
+Executada em 2026-09-25, contra o parque real. Cada etapa guarda o
+procedimento original e o resultado, para que possa ser repetida quando
+entrar um modelo novo de impressora.
 
 ### 4B.1 — Conferir o nível contra o painel
 
@@ -159,6 +219,10 @@ cartucho recém-trocado, que deveria dar perto de 100%.
 
 **Adaptação possível:** se o desvio for sistemático, decidir qual fonte é
 a verdade antes de a série histórica crescer.
+
+**Resultado:** confere. Na 10.165.22.54 o SNMP deu 80% (80/100) e o
+painel mostrava 80%. O pareamento por índice resolveu a divergência do
+MVP; a hipótese da escala grosseira não precisou ser investigada.
 
 ### 4B.2 — Como o parque reage a um toner paralelo
 
@@ -196,9 +260,23 @@ O que se espera: paralelo com `status=nao_reportado` e original com
 - Se o paralelo reportar nível corretamente, a classificação continua
   valendo e ganha-se a confirmação de que o parque não tem esse problema.
 
-**Teste a acrescentar depois:** com o comportamento real conhecido, criar
-um teste em `tests/test_readings_service.py` reproduzindo exatamente os
-valores observados no parque.
+**Resultado:** comparadas duas iR1643i II — 10.165.22.54 (T06 original)
+e 10.165.22.45 (T06 paralelo):
+
+| | Original | Paralelo |
+|---|---|---|
+| `nivel_bruto` | 80 | **-2** |
+| `capacidade_max` | 100 | 100 |
+| `status` | `ok` | **`nao_reportado`** |
+
+O paralelo responde com o código especial -2 da RFC 3805 (nível
+desconhecido), a hipótese mais provável. O caso ruim — valor numérico
+fixo passando como `ok` — **não** aconteceu, então nenhuma adaptação foi
+necessária. Na coleta completa (4B.4), as 5 impressoras com paralelo
+repetiram exatamente esse padrão.
+
+Os valores reais viraram o teste `TestParqueObservado`, em
+`tests/test_readings_service.py`.
 
 ### 4B.3 — Descobrir o OID do contador de cópias
 
@@ -257,8 +335,8 @@ Com uma coleta completa gravada, verificar:
 - **Marca/modelo:** 62 Canon iR1643i II deduzidas corretamente. Uma
   (10.165.20.82) ficou com modelo e sem marca: o `sysDescr` não chegou
   naquela coleta, embora responda `Canon iR1643i II /P` fora dela. A
-  heurística está certa; foi uma consulta que falhou isolada — ver
-  "Pontos em aberto" abaixo.
+  heurística está certa; foi uma consulta que falhou isolada — ver 4B.5.
+  Nas coletas seguintes a marca veio normalmente.
 - **MIB inconsistente:** nenhuma linha com `status='erro'`.
 - **Toner paralelo:** 5 impressoras com `nao_reportado`, todas com o mesmo
   padrão da 4B.2 (`-2/100`).
@@ -368,29 +446,45 @@ esperando o timeout (`SNMP_TIMEOUT_SECONDS=3` × 2 tentativas).
 
 ---
 
-## Fase 5B — Teste de integração com o parque
+## Fase 5B — Teste de integração com o parque — em andamento
 
-**Bloqueada até haver acesso ao parque.** Complementa a Fase 5: onde os
-testes atuais dublam a rede, este exercita a coisa real.
+Complementa a Fase 5: onde os testes atuais dublam a rede, este exercita
+a coisa real.
 
-Escopo:
+| # | Item | Estado |
+|---|---|---|
+| 1 | Coleta completa de ponta a ponta | **Feito** (manual) |
+| 2 | Tempo total da coleta | **Feito** — 15 s |
+| 3 | Coleta sobreposta na prática | Pendente — pode ser feito já |
+| 4 | Recuperação de coleta travada | Pendente — pode ser feito já |
+| 5 | Ciclo de troca real | Pendente — depende de uma troca de cartucho |
 
-1. **Coleta completa de ponta a ponta**, contra um banco de testes
-   separado (nunca o de produção), verificando que as 66 impressoras são
-   consultadas, que `coleta_executada` fecha com status coerente e que a
-   quantidade de linhas em `leitura_toner` bate com o esperado.
+1. **Coleta completa de ponta a ponta**, verificando que as 66
+   impressoras são consultadas, que `coleta_executada` fecha com status
+   coerente e que a quantidade de linhas em `leitura_toner` bate com o
+   esperado.
+   **Feito na 4B:** coletas #1 a #3 fecharam `PARTIAL` com 63 de 66, uma
+   linha por impressora em cada (58 `ok`, 5 `nao_reportado`,
+   3 `sem_resposta`). Rodou contra o banco `monitoramentoimpressoras-ue`,
+   e não contra um banco de testes separado como o plano previa.
 2. **Tempo total da coleta**, para confirmar que
    `COLLECTOR_MAX_CONCURRENT_REQUESTS=15` é adequado e que a coleta cabe
    folgadamente dentro do intervalo entre horários.
+   **Feito:** 15 s, com 15 em paralelo — ver "Tempo de coleta" acima. Não
+   foi preciso mexer no paralelismo.
 3. **Coleta sobreposta na prática**: disparar `cli.py` durante uma coleta
-   agendada e confirmar que a segunda é recusada sem criar registro.
+   e confirmar que a segunda é recusada sem criar registro. Com a coleta
+   em 15 s a janela é curta: disparar as duas quase juntas.
 4. **Recuperação de coleta travada**: matar o processo no meio de uma
    coleta e confirmar que a rodada seguinte libera o `RUNNING` órfão após
-   o timeout.
+   o timeout (`COLLECTOR_TIMEOUT_COLETA_MINUTOS`, padrão 30 — dá para
+   baixar temporariamente no `.env` para o teste).
 5. **Ciclo de troca real**: trocar um toner numa impressora, rodar a
    coleta e confirmar que a troca é detectada com `paginas_rendidas`
    coerente com o número anotado na caixa. É a validação final do
-   objetivo do projeto.
+   objetivo do projeto. Para ter `paginas_rendidas`, a impressora
+   precisa de **duas** trocas registradas pelo sistema: a primeira só
+   fixa o ponto de partida.
 
 Esses testes ficam separados dos da Fase 5 (sugestão: `tests/integracao/`,
 fora do `testpaths` padrão), para que a suíte do dia a dia continue
@@ -515,5 +609,10 @@ Relatórios que o modelo de dados já sustenta assim que houver histórico:
 
 - **Alertas de toner baixo** (e-mail/Teams) — ainda não definido se entra
   no escopo.
-- **Ambiente virtual e deploy** — o projeto não roda na máquina de
-  desenvolvimento atual; o core é produzido aqui e executado no servidor.
+- **Passo a passo de instalação no servidor** — ainda não escrito.
+  Precisa cobrir: Python e ambiente virtual, `pip install -r
+  requirements.txt`, `.env` copiado do `.env.example` (os OIDs Canon já
+  vêm preenchidos; ajustar só o banco), criação do banco com os dois
+  scripts SQL em ordem, e o agendamento conforme a decisão da Fase 6.
+  A validação da 4B rodou numa máquina com acesso ao parque e ao
+  MariaDB, então o caminho está provado — falta registrá-lo.

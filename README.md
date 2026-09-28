@@ -151,28 +151,22 @@ cobertura estão em [docs/TESTES.md](docs/TESTES.md).
 
 ---
 
-## Validação pendente em hardware
+## Validação em hardware
 
-Quatro coisas só podem ser confirmadas com uma impressora real à mão.
-O procedimento completo está na **Fase 4B** do
-[cronograma](docs/CRONOGRAMA.md#fase-4b--validação-em-hardware).
+Concluída em 2026-09-25 (Fase 4B do
+[cronograma](docs/CRONOGRAMA.md#fase-4b--validação-em-hardware--concluída)),
+contra o parque de Canon iR1643i II:
 
-1. **Nível conferido contra o painel.** Rode `cli.py --dry-run` e compare.
-   O MVP mostrava um valor divergente do painel; a causa provável era o
-   pareamento por posição entre as tabelas de nível e de capacidade, hoje
-   substituído por pareamento pela chave da linha na MIB.
+1. **Nível:** confere com o painel.
+2. **Toner paralelo:** responde com o código -2 da RFC 3805 e é
+   classificado como `nao_reportado`.
+3. **Contadores:** total e cópias vêm dos contadores Canon 101 e 201 —
+   o `prtMarkerLifeCount` padrão não bate com o painel. Os dois OIDs já
+   estão no `.env.example`.
+4. **Coleta completa:** 66 impressoras em 15 s.
 
-2. **Como o parque reage a um toner paralelo.** O código classifica três
-   formas de "não reportou nível", mas ainda não se sabe qual delas as
-   impressoras realmente produzem. Comparar uma impressora com paralelo
-   e outra com original resolve.
-
-3. **Contador de cópias.** Resolvido na iR1643i II: contador Canon 201,
-   em `SNMP_OID_CONTADOR_COPIAS`.
-
-4. **Contador de total.** Resolvido: `prtMarkerLifeCount` não bate com o
-   painel na Canon; o total vem do contador Canon 101, em
-   `SNMP_OID_CONTADOR_TOTAL`.
+O que ainda falta para produção está em
+[Onde paramos / O que falta](docs/CRONOGRAMA.md#o-que-falta).
 
 ---
 
